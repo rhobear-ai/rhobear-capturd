@@ -42,18 +42,13 @@ one run.
 ## Install
 
 ```bash
-pip install sunsponge-capture
-python -m playwright install chromium     # one-time browser download
-```
-
-Or from source:
-
-```bash
 git clone https://github.com/deariencampbell1-sys/sunsponge-capture
 cd sunsponge-capture
 pip install -e .
-python -m playwright install chromium
+python -m playwright install chromium     # one-time browser download
 ```
+
+> A PyPI release (so `pip install sunsponge-capture` just works) is on the way — for now, install from source above.
 
 ## Usage
 
