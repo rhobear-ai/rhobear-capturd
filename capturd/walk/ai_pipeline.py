@@ -334,17 +334,25 @@ def _load_screenshot_b64(spec: dict, step: dict, project_root: Path) -> str | No
 # ---------------------------------------------------------------------------
 
 
-async def _synthesize_one(text: str, voice: str = "en-US-AriaNeural") -> bytes:
-    """Synthesize one annotation to MP3 bytes via Edge TTS.
+async def _synthesize_one(
+    text: str, voice: str = "en-US-AriaNeural"
+) -> tuple[bytes, list]:
+    """Synthesize one annotation to MP3 bytes + per-word timestamps via Edge TTS.
 
-    TODO(W3) — voice-sync: currently returns only audio bytes. To align the
-    camera to the *word* the narrator is saying (moat feature — no competitor
-    has it), edge-tts emits per-word timing via WordBoundary events. Change
-    this function to return ``(bytes, list[WordTimestamp])`` and have callers
-    populate ``step.voiceoverWords``. The animation timeline generator (W2)
-    then anchors ``AnimationKeyframe.tStartMs`` to those word offsets.
+    edge-tts streams chunks of two types:
+      * ``{"type": "audio", "data": <bytes>}`` — audio bytes
+      * ``{"type": "WordBoundary", "offset": <100ns>, "duration": <100ns>,
+        "text": <word>}`` — word timing events
+
+    We collect both, convert 100ns ticks to ms (offset / 10000), and return
+    ``(audio_bytes, [WordTimestamp, ...])`` so callers can populate
+    ``step.voiceoverWords`` for voice-synced camera keyframes.
+
     Reference: :class:`capturd.walk.schema.WordTimestamp`.
     """
+    # Lazy import so the module doesn't break at import time.
+    from capturd.walk.schema import WordTimestamp
+
     try:
         import edge_tts
     except ImportError as exc:  # pragma: no cover - import-time guard
@@ -352,15 +360,27 @@ async def _synthesize_one(text: str, voice: str = "en-US-AriaNeural") -> bytes:
             "The 'edge-tts' package is not installed. Run `pip install edge-tts>=6.0`."
         ) from exc
     if not text or not text.strip():
-        return b""
-    com = edge_tts.Communicate(text.strip(), voice)
-    # edge_tts streams chunks into a bytes buffer; collect via an in-memory sink.
+        return b"", []
+    com = edge_tts.Communicate(text.strip(), voice, boundary="WordBoundary")
     import io
     sink = io.BytesIO()
+    word_ts: list[WordTimestamp] = []
     async for chunk in com.stream():
         if chunk.get("type") == "audio" and chunk.get("data"):
             sink.write(chunk["data"])
-    return sink.getvalue()
+        elif chunk.get("type") == "WordBoundary":
+            # offset and duration are in 100-nanosecond ticks (HNS).
+            # Convert to milliseconds: 1 ms = 10_000 HNS.
+            offset_ms = int(chunk["offset"]) // 10000
+            dur_ms = int(chunk["duration"]) // 10000
+            w = chunk.get("text", "")
+            if w:
+                word_ts.append(WordTimestamp(
+                    word=w,
+                    tStartMs=offset_ms,
+                    tEndMs=offset_ms + dur_ms,
+                ))
+    return sink.getvalue(), word_ts
 
 
 # ---------------------------------------------------------------------------
@@ -539,12 +559,14 @@ class DemoAI:
                 return
             async with sem:
                 try:
-                    audio = await _synthesize_one(text, voice=self.voice)
+                    audio, words = await _synthesize_one(text, voice=self.voice)
                 except Exception as exc:
                     logger.warning("tts failed for step %d: %s", idx, exc)
                     return
             if audio:
                 step["voiceoverBase64"] = base64.b64encode(audio).decode("ascii")
+            if words:
+                step["voiceoverWords"] = [asdict(wt) for wt in words]
 
         await asyncio.gather(*(one(i, s) for i, s in enumerate(steps)))
 
