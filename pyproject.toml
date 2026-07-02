@@ -54,3 +54,8 @@ packages = ["capturd", "capturd.shots", "capturd.walk", "capturd.mcp"]
 
 [tool.setuptools.package-data]
 "capturd.walk" = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (browser-dependent, skipped by default)",
+]
