@@ -34,9 +34,9 @@ dependencies = [
 # Voice input — push-to-talk while watching the agent walk the flow.
 # faster-whisper is CT2-backed (~5x openai-whisper) and offline-capable.
 # Pull only when you actually want voice mode; ~500MB of native deps.
-voice = ["faster-whisper>=1.0", "sounddevice>=0.4"]
-dev = ["pytest>=7"]
-all = ["faster-whisper>=1.0", "sounddevice>=0.4", "pytest>=7"]
+voice = ["faster-whisper>=1.0", "sounddevice>=0.4", "miniaudio>=1.60"]
+dev = ["pytest>=7", "pytest-asyncio>=0.21"]
+all = ["faster-whisper>=1.0", "sounddevice>=0.4", "miniaudio>=1.60", "pytest>=7", "pytest-asyncio>=0.21"]
 
 [project.scripts]
 # New top-level dispatcher: `capturd shots ...` | `capturd walk ...` | `capturd serve`
