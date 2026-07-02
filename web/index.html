@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Captur'd - your product films its own demo</title>
+<meta name="description" content="Point Captur'd at your site, say what to show, and get a polished walkthrough video. Agent-made product demos with cinematic zoom, a live cursor, and voiceover. No editing." />
+
+<!--
+  Captur'd landing + onboarding.  Single self-contained file so it deploys on
+  any static host and sits behind any auth / paywall proxy.
+
+  DEPLOYER CONFIG: set these once for your deployment. Everything degrades
+  honestly when they are blank (the UI tells the user what is missing instead
+  of pretending it worked).
+-->
+<script>
+  window.CAPTURD_CONFIG = {
+    googleAuthUrl: "",     // e.g. "/auth/google/start" or your Google Identity URL
+    githubConnectUrl: "",  // e.g. "/connect/github/start"
+    apiBase: "",           // e.g. "/api"  (POST {apiBase}/generate)
+    freeGenerations: 1,    // one free run per new account
+    freeShotLimit: 20,     // up to 20 shots on the free tier
+    proPrice: "$19"        // monthly, edit to taste
+  };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg: #0a0c10;
+    --bg-2: #0d1015;
+    --panel: #12151c;
+    --panel-2: #171b23;
+    --line: rgba(255,255,255,0.08);
+    --line-2: rgba(255,255,255,0.15);
+    --text: #eceef1;
+    --muted: #9aa2ad;
+    --muted-2: #6c7480;
+    --accent: #4f8cff;
+    --accent-2: #6fa0ff;
+    --accent-ink: #071019;
+    --good: #35c47a;
+    --r: 16px;
+    --r-sm: 12px;
+    --pill: 999px;
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Segoe UI Mono", Menlo, Consolas, monospace;
+    --maxw: 1180px;
+  }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  h1, h2, h3 { margin: 0; letter-spacing: -0.02em; line-height: 1.05; font-weight: 680; }
+  p { margin: 0; }
+  img, video { max-width: 100%; display: block; }
+  ::selection { background: rgba(79,140,255,0.35); }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  .section { padding: 96px 0; }
+  @media (max-width: 720px) { .section { padding: 64px 0; } }
+
+  .eyebrow {
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent-2); font-weight: 600;
+  }
+  .lead { color: var(--muted); font-size: 17px; max-width: 62ch; }
+
+  /* ---- buttons ---- */
+  .btn {
+    display: inline-flex; align-items: center; gap: 9px; justify-content: center;
+    font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
+    border: 1px solid transparent; border-radius: var(--pill);
+    padding: 12px 22px; transition: transform .08s ease, background .18s ease, border-color .18s ease, color .18s ease;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-2); }
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--line-2); }
+  .btn-ghost:hover { border-color: #fff; background: rgba(255,255,255,0.04); }
+  .btn-google {
+    background: #fff; color: #1f1f1f; border-color: #fff;
+  }
+  .btn-google:hover { background: #f1f3f5; }
+  .btn-github { background: #1b2029; color: #fff; border-color: var(--line-2); }
+  .btn-github:hover { border-color: #fff; }
+  .btn-lg { padding: 15px 30px; font-size: 16px; }
+  .btn svg { flex: 0 0 auto; }
+
+  /* ---- nav ---- */
+  header.nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: saturate(160%) blur(12px);
+    background: rgba(10,12,16,0.72);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; gap: 24px; height: 66px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; font-size: 17px; }
+  .brand .mark { width: 26px; height: 26px; }
+  .nav-links { display: flex; gap: 26px; margin-left: 14px; }
+  .nav-links a { color: var(--muted); font-size: 14.5px; font-weight: 500; transition: color .15s ease; }
+  .nav-links a:hover { color: var(--text); }
+  .nav-cta { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  @media (max-width: 860px) {
+    .nav-links { display: none; }
+    .nav-cta .btn-ghost { display: none; }
+  }
+
+  /* ---- hero ---- */
+  .hero { padding-top: 84px; padding-bottom: 40px; }
+  .hero-grid { display: grid; grid-template-columns: 1.02fr 1.15fr; gap: 56px; align-items: center; }
+  @media (max-width: 940px) { .hero-grid { grid-template-columns: 1fr; gap: 36px; } }
+  .hero h1 { font-size: clamp(38px, 5.4vw, 66px); font-weight: 720; }
+  .hero h1 .em { color: var(--accent-2); font-style: italic; font-weight: 700; }
+  .hero .lead { margin-top: 20px; font-size: 18.5px; }
+  .hero-cta { margin-top: 30px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+  .device {
+    position: relative; border-radius: var(--r); overflow: hidden;
+    border: 1px solid var(--line-2); background: #05070a;
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.02);
+  }
+  .device-bar {
+    display: flex; align-items: center; gap: 8px; padding: 11px 14px;
+    background: #0e1116; border-bottom: 1px solid var(--line);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: #2b313b; }
+  .device-url {
+    margin-left: 10px; font-family: var(--mono); font-size: 12px; color: var(--muted-2);
+    background: #05070a; border: 1px solid var(--line); border-radius: var(--pill);
+    padding: 4px 12px; flex: 1; text-align: center; max-width: 320px;
+  }
+  .device video, .device img { width: 100%; aspect-ratio: 1280 / 800; object-fit: cover; background: #05070a; }
+  .device .live-tag {
+    position: absolute; right: 12px; bottom: 12px;
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    background: rgba(10,12,16,0.82); border: 1px solid var(--line-2);
+    padding: 6px 12px; border-radius: var(--pill); color: var(--text);
+    backdrop-filter: blur(6px);
+  }
+  .live-tag .rec { width: 8px; height: 8px; border-radius: 50%; background: #ff453a; }
+
+  /* free-tier strip under hero */
+  .freestrip { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg-2); }
+  .freestrip .row { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; padding: 18px 0; color: var(--muted); font-size: 14.5px; }
+  .freestrip .row b { color: var(--text); font-weight: 600; }
+  .freestrip .chk { color: var(--accent-2); }
+  .freestrip .item { display: inline-flex; align-items: center; gap: 9px; }
+
+  /* ---- section heads ---- */
+  .head { max-width: 640px; margin-bottom: 40px; }
+  .head h2 { font-size: clamp(28px, 3.6vw, 42px); }
+  .head p { margin-top: 14px; }
+
+  /* ---- flow panel ---- */
+  .flow { background: linear-gradient(180deg, var(--bg-2), var(--bg)); border-top: 1px solid var(--line); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r);
+    padding: 30px; max-width: 720px; margin: 0 auto;
+    box-shadow: 0 24px 70px -40px rgba(0,0,0,0.9);
+  }
+  .field { margin-bottom: 20px; }
+  .field label { display: block; font-size: 13.5px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+  .field .hint { font-size: 12.5px; color: var(--muted-2); font-weight: 400; margin-left: 6px; }
+  .input, .textarea {
+    width: 100%; font: inherit; font-size: 15px; color: var(--text);
+    background: #0b0e13; border: 1px solid var(--line-2); border-radius: var(--r-sm);
+    padding: 13px 14px; transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .textarea { min-height: 84px; resize: vertical; line-height: 1.5; }
+  .input::placeholder, .textarea::placeholder { color: var(--muted-2); }
+  .input:focus, .textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(79,140,255,0.18); }
+
+  .gh-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .gh-pill { display: none; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text); background: #0b0e13; border: 1px solid var(--line-2); border-radius: var(--pill); padding: 8px 14px; }
+  .gh-pill.on { display: inline-flex; }
+  .gh-pill .chk { color: var(--good); }
+
+  .seg { display: inline-flex; padding: 4px; gap: 4px; background: #0b0e13; border: 1px solid var(--line-2); border-radius: var(--pill); }
+  .seg button {
+    font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; color: var(--muted);
+    background: transparent; border: 0; border-radius: var(--pill); padding: 9px 18px;
+    display: inline-flex; align-items: center; gap: 8px; transition: color .15s ease, background .15s ease;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .seg .mic { width: 15px; height: 15px; }
+  .seg-note { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 20px; }
+
+  .run-row { display: flex; align-items: center; gap: 16px; margin-top: 26px; flex-wrap: wrap; }
+  .run-meta { font-size: 13px; color: var(--muted-2); }
+  .status { margin-top: 18px; font-size: 14px; border-radius: var(--r-sm); padding: 0; overflow: hidden; max-height: 0; transition: max-height .2s ease; }
+  .status.show { max-height: 200px; }
+  .status .inner { padding: 14px 16px; border-radius: var(--r-sm); border: 1px solid var(--line-2); background: #0b0e13; display: flex; gap: 11px; align-items: flex-start; }
+  .status.err .inner { border-color: rgba(255,90,80,0.4); background: rgba(255,90,80,0.07); }
+  .status .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line-2); border-top-color: var(--accent); animation: spin 0.7s linear infinite; flex: 0 0 auto; margin-top: 1px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .status .spin { animation: none; } }
+
+  /* ---- result cards (skills) ---- */
+  .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
+  .card {
+    grid-column: span 2; text-align: left; cursor: pointer; font: inherit; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 22px; transition: transform .12s ease, border-color .18s ease, background .18s ease;
+    position: relative; display: flex; flex-direction: column; gap: 10px; min-height: 168px;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--line-2); }
+  .card[aria-pressed="true"] { border-color: var(--accent); background: var(--panel-2); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .card .ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: rgba(79,140,255,0.12); color: var(--accent-2); }
+  .card h3 { font-size: 17px; font-weight: 640; }
+  .card p { color: var(--muted); font-size: 13.5px; }
+  .card .tick { position: absolute; top: 16px; right: 16px; color: var(--accent); opacity: 0; transition: opacity .15s ease; }
+  .card[aria-pressed="true"] .tick { opacity: 1; }
+  .card.feature { grid-column: span 3; min-height: 200px; }
+  .card.feature .media { margin-top: auto; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); }
+  .card.feature .media img { aspect-ratio: 1280/800; object-fit: cover; }
+  @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, 1fr); } .card, .card.feature { grid-column: span 1; } }
+  @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
+
+  /* ---- how it works ---- */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; position: relative; }
+  .step { padding: 26px 0 0; }
+  .step .n { font-family: var(--mono); font-size: 13px; color: var(--accent-2); letter-spacing: 0.1em; }
+  .step h3 { font-size: 20px; margin: 12px 0 8px; }
+  .step p { color: var(--muted); font-size: 14.5px; max-width: 34ch; }
+  .step { border-top: 1px solid var(--line-2); }
+  @media (max-width: 820px) { .steps { grid-template-columns: 1fr; gap: 8px; } }
+
+  /* ---- pricing ---- */
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 860px; margin: 0 auto; }
+  @media (max-width: 720px) { .plans { grid-template-columns: 1fr; } }
+  .plan { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 30px; display: flex; flex-direction: column; }
+  .plan.pro { border-color: var(--accent); background: linear-gradient(180deg, var(--panel-2), var(--panel)); }
+  .plan .name { font-size: 15px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+  .plan .price { font-size: 44px; font-weight: 700; letter-spacing: -0.03em; margin: 10px 0 2px; }
+  .plan .price small { font-size: 15px; color: var(--muted); font-weight: 500; letter-spacing: 0; }
+  .plan ul { list-style: none; padding: 0; margin: 22px 0 26px; display: grid; gap: 12px; }
+  .plan li { display: flex; gap: 11px; align-items: flex-start; font-size: 14.5px; color: var(--text); }
+  .plan li svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent-2); }
+  .plan .btn { width: 100%; margin-top: auto; }
+
+  /* ---- help accordion ---- */
+  .acc { max-width: 760px; margin: 0 auto; border-top: 1px solid var(--line); }
+  .acc-item { border-bottom: 1px solid var(--line); }
+  .acc-q { width: 100%; text-align: left; font: inherit; cursor: pointer; color: var(--text); background: none; border: 0; padding: 22px 4px; display: flex; align-items: center; gap: 16px; font-size: 17px; font-weight: 560; }
+  .acc-q .plus { margin-left: auto; color: var(--muted); transition: transform .2s ease; flex: 0 0 auto; }
+  .acc-item.open .acc-q .plus { transform: rotate(45deg); color: var(--accent-2); }
+  .acc-a { max-height: 0; overflow: hidden; transition: max-height .24s ease; }
+  .acc-a p { color: var(--muted); font-size: 15px; padding: 0 4px 22px; max-width: 68ch; }
+
+  /* ---- footer ---- */
+  footer { border-top: 1px solid var(--line); padding: 44px 0; color: var(--muted-2); }
+  .foot { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; font-size: 14px; }
+  .foot .brand { color: var(--text); }
+  .foot a { color: var(--muted); }
+  .foot a:hover { color: var(--text); }
+  .foot .sp { margin-left: auto; }
+
+  /* ---- modal ---- */
+  .modal { position: fixed; inset: 0; z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal.show { display: flex; }
+  .modal .scrim { position: absolute; inset: 0; background: rgba(4,6,9,0.72); backdrop-filter: blur(4px); }
+  .modal .card-m {
+    position: relative; z-index: 1; width: 100%; max-width: 400px; text-align: center;
+    background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); padding: 32px 28px;
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.9);
+  }
+  .modal h3 { font-size: 22px; margin-bottom: 8px; }
+  .modal p { color: var(--muted); font-size: 14.5px; margin-bottom: 22px; }
+  .modal .btn-google { width: 100%; }
+  .modal .fine { margin-top: 16px; font-size: 12px; color: var(--muted-2); }
+  .modal .x { position: absolute; top: 14px; right: 14px; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 20px; line-height: 1; padding: 4px; }
+
+  /* toast */
+  .toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(20px); z-index: 120; opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease; background: var(--panel-2); border: 1px solid var(--line-2); color: var(--text); font-size: 14px; padding: 12px 18px; border-radius: var(--pill); box-shadow: 0 20px 50px -20px rgba(0,0,0,0.9); max-width: 90vw; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* reveal on scroll */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .6s cubic-bezier(.16,1,.3,1), transform .6s cubic-bezier(.16,1,.3,1); }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+</style>
+</head>
+<body>
+
+<!-- ============================ NAV ============================ -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="Captur'd home">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="8" stroke="#4f8cff" stroke-width="1.6"/>
+        <circle cx="16" cy="16" r="7.4" stroke="#6fa0ff" stroke-width="1.6"/>
+        <circle cx="16" cy="16" r="2.4" fill="#4f8cff"/>
+      </svg>
+      Captur'd
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#how">How it works</a>
+      <a href="#results">Results</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#help">Help</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-ghost" href="#start">Start free</a>
+      <button class="btn btn-google" data-auth aria-label="Continue with Google">
+        <svg width="17" height="17" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.46 3.44 1.35l2.58-2.58C13.47.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+        Continue with Google
+      </button>
+    </div>
+  </div>
+</header>
+
+<span id="top"></span>
+
+<!-- ============================ HERO ============================ -->
+<section class="hero wrap">
+  <div class="hero-grid">
+    <div>
+      <p class="eyebrow">Agent-made product videos</p>
+      <h1 style="margin-top:16px">Your product films <span class="em">its own</span> demo.</h1>
+      <p class="lead">Point it at your site, say what to show, get a polished walkthrough video. No editing, no timeline.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary btn-lg" href="#start">Start free</a>
+        <a class="btn btn-ghost btn-lg" href="#demo-video" id="watch-demo">
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5-9-5.5z" fill="currentColor"/></svg>
+          Watch it work
+        </a>
+      </div>
+    </div>
+    <div class="device" id="demo-video">
+      <div class="device-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="device-url">yourproduct.com</span>
+      </div>
+      <video id="hero-video" src="assets/hero.mp4" poster="assets/shot-zoom.png" muted loop playsinline preload="metadata" aria-label="A Captur'd walkthrough video: the camera zooms in on each field with a live cursor"></video>
+      <span class="live-tag"><span class="rec"></span> real Captur'd output</span>
+    </div>
+  </div>
+</section>
+
+<div class="freestrip">
+  <div class="wrap">
+    <div class="row">
+      <span class="item"><span class="chk" aria-hidden="true">&#10003;</span> <span><b>1 free generation</b>, up to <b>20 shots</b></span></span>
+      <span class="item"><span class="chk" aria-hidden="true">&#10003;</span> No credit card</span>
+      <span class="item"><span class="chk" aria-hidden="true">&#10003;</span> Your repo stays yours</span>
+      <span class="item"><span class="chk" aria-hidden="true">&#10003;</span> Video, GIF, or clean stills</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ THE FLOW ============================ -->
+<section class="flow section" id="start">
+  <div class="wrap">
+    <div class="head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <h2>Two things in, a video out.</h2>
+      <p class="lead" style="margin-left:auto;margin-right:auto;">Give it your site and (optionally) your repo, tell it what to capture, and pick who drives. That is the whole setup.</p>
+    </div>
+
+    <form class="panel reveal" id="capture-form" autocomplete="off">
+      <div class="field">
+        <label for="site">Your site or sitemap <span class="hint">the URL we should walk</span></label>
+        <input class="input" id="site" name="site" type="url" placeholder="https://yourproduct.com  or  https://yourproduct.com/sitemap.xml" />
+      </div>
+
+      <div class="field">
+        <label>Connect GitHub <span class="hint">optional, for pixel-true local rendering</span></label>
+        <div class="gh-row">
+          <button type="button" class="btn btn-github" id="gh-btn">
+            <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          Connect GitHub repo
+          </button>
+          <span class="gh-pill" id="gh-pill"><span class="chk" aria-hidden="true">&#10003;</span> <span id="gh-name">connected</span></span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="intent">What do you want to capture? <span class="hint">plain language</span></label>
+        <textarea class="textarea" id="intent" name="intent" placeholder="Walk through signing up and creating a first project. Zoom in on the plan picker."></textarea>
+      </div>
+
+      <div class="field" style="margin-bottom:8px">
+        <label>Who drives?</label>
+        <div class="seg" role="group" aria-label="Capture mode">
+          <button type="button" data-mode="agent" aria-pressed="true">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5 14 5v6L8 14.5 2 11V5l6-3.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8" r="2" fill="currentColor"/></svg>
+            Agent does it
+          </button>
+          <button type="button" data-mode="demo" aria-pressed="false">
+            <svg class="mic" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="6" y="1.5" width="4" height="8" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+            Demo mode (walk with me)
+          </button>
+        </div>
+        <p class="seg-note" id="mode-note">The agent clicks through the flow on its own and hands you the finished video.</p>
+      </div>
+
+      <div class="run-row">
+        <button type="submit" class="btn btn-primary btn-lg" id="capture-btn">Capture it</button>
+        <span class="run-meta" id="run-meta">1 free generation on your account</span>
+      </div>
+
+      <div class="status" id="status" role="status" aria-live="polite"><div class="inner" id="status-inner"></div></div>
+    </form>
+  </div>
+</section>
+
+<!-- ============================ RESULTS / SKILLS ============================ -->
+<section class="section wrap" id="results">
+  <div class="head reveal">
+    <p class="eyebrow">Pick your result</p>
+    <h2>Different skills for different videos.</h2>
+    <p class="lead">Tap the result you want before you run. Each one sets the camera, pacing, and output so you are not fiddling with settings.</p>
+  </div>
+
+  <div class="cards" id="cards">
+    <button type="button" class="card feature" data-skill="walkthrough" data-intent="Full product walkthrough with cinematic zoom, a live cursor, and voiceover." aria-pressed="true">
+      <span class="tick" aria-hidden="true">&#10003;</span>
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="3" width="13" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="m6.5 6 4 2-4 2V6Z" fill="currentColor"/></svg></span>
+      <h3>Full walkthrough</h3>
+      <p>The flagship. Smooth zoom onto every click, a bold cursor, spotlight, and narration. Exports MP4.</p>
+      <span class="media"><img src="assets/shot-type.png" alt="A walkthrough frame: the camera zoomed tight on a form field with a large cursor" loading="lazy" /></span>
+    </button>
+
+    <button type="button" class="card" data-skill="onboarding" data-intent="First-run onboarding flow with step captions." aria-pressed="false">
+      <span class="tick" aria-hidden="true">&#10003;</span>
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h9m0 0-3-3m3 3-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 2.5v11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+      <h3>Onboarding flow</h3>
+      <p>The first-run path a new user takes, captioned step by step.</p>
+    </button>
+
+    <button type="button" class="card" data-skill="spotlight" data-intent="Feature spotlight: one feature, tight zoom, short and punchy." aria-pressed="false">
+      <span class="tick" aria-hidden="true">&#10003;</span>
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg></span>
+      <h3>Feature spotlight</h3>
+      <p>One feature, one tight punch-in. Great for launch posts.</p>
+    </button>
+
+    <button type="button" class="card" data-skill="stills" data-intent="Rested-state stills across desktop and mobile, light and dark. Up to 20 shots." aria-pressed="false">
+      <span class="tick" aria-hidden="true">&#10003;</span>
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.5" width="9" height="7" rx="1.5" stroke="currentColor" stroke-width="1.4"/><rect x="5" y="6.5" width="9" height="7" rx="1.5" stroke="currentColor" stroke-width="1.4" fill="var(--panel)"/></svg></span>
+      <h3>Rested-state shots</h3>
+      <p>Clean stills, desktop and mobile, light and dark. Up to 20.</p>
+    </button>
+
+    <button type="button" class="card" data-skill="gif" data-intent="Short looping GIF for a README or a post." aria-pressed="false">
+      <span class="tick" aria-hidden="true">&#10003;</span>
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M13.5 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <h3>GIF loop</h3>
+      <p>A short, tidy loop that drops straight into a README.</p>
+    </button>
+  </div>
+</section>
+
+<!-- ============================ HOW IT WORKS ============================ -->
+<section class="section" id="how" style="background:var(--bg-2); border-top:1px solid var(--line); border-bottom:1px solid var(--line);">
+  <div class="wrap">
+    <div class="head reveal">
+      <h2>No dashboard to learn.</h2>
+      <p class="lead">Three moves, then it runs. You watch it happen in a window on the side and the file lands when it is done.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal"><div class="n">01</div><h3>Connect</h3><p>Sign in with Google. Drop your site or sitemap, and connect a repo if you want pixel-true local rendering.</p></div>
+      <div class="step reveal"><div class="n">02</div><h3>Point</h3><p>Say what to capture in plain language, and pick a result. That is the entire brief.</p></div>
+      <div class="step reveal"><div class="n">03</div><h3>Capture</h3><p>The agent films it, or in demo mode you talk it through step by step. Out comes the video.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PRICING ============================ -->
+<section class="section wrap" id="pricing">
+  <div class="head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+    <h2>Start free. Upgrade when it earns its keep.</h2>
+    <p class="lead" style="margin-left:auto;margin-right:auto;">One real generation on the house so you can see your own product on camera before you pay a cent.</p>
+  </div>
+  <div class="plans">
+    <div class="plan reveal">
+      <div class="name">Free</div>
+      <div class="price">$0</div>
+      <ul>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>1 generation</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Up to 20 shots</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Watermark-free MP4</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Connect your own repo</li>
+      </ul>
+      <button class="btn btn-ghost" data-auth>Start free</button>
+    </div>
+    <div class="plan pro reveal">
+      <div class="name">Pro</div>
+      <div class="price" id="pro-price">$19<small> / month</small></div>
+      <ul>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited generations</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Demo mode: talk to it live while it records</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>MP4, GIF, and stills, every result</li>
+        <li><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="m3 8.5 3 3 7-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority render queue</li>
+      </ul>
+      <button class="btn btn-primary" data-auth>Go Pro</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ HELP ============================ -->
+<section class="section" id="help" style="background:var(--bg-2); border-top:1px solid var(--line);">
+  <div class="wrap">
+    <div class="head reveal" style="text-align:center; margin-left:auto; margin-right:auto;">
+      <p class="eyebrow">Help &amp; best practices</p>
+      <h2>Get a great video on the first try.</h2>
+    </div>
+    <div class="acc" id="acc">
+      <div class="acc-item open">
+        <button class="acc-q" aria-expanded="true">Give one clear goal per capture<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>One flow films best. "Sign up and create a project" beats "show everything." If you have two stories, run two captures. Short, focused videos hold attention and let the camera actually zoom in on what matters.</p></div>
+      </div>
+      <div class="acc-item">
+        <button class="acc-q" aria-expanded="false">Point at the real flow, not the homepage<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>Give the URL where the action starts (your app, a signup page, a specific feature). The homepage is a poster, not a walkthrough. If your app is behind a login, use demo mode so you can drive past the gate.</p></div>
+      </div>
+      <div class="acc-item">
+        <button class="acc-q" aria-expanded="false">Let it zoom: name precise targets<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>The camera punches in on whatever you click, hardest on small chips and icons. Tell it "click the plan picker" rather than "scroll around," and every step lands a tight, readable close-up instead of a vague pan.</p></div>
+      </div>
+      <div class="acc-item">
+        <button class="acc-q" aria-expanded="false">Use demo mode for gated or tricky flows<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>Hit the mic and talk it through: "click the house button, now type this." It performs each step on camera while you speak, and nothing you say shows up in the recording. Perfect for logins, payments, and anything the agent cannot reach on its own.</p></div>
+      </div>
+      <div class="acc-item">
+        <button class="acc-q" aria-expanded="false">Keep it to 4 to 8 steps<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>The best product clips are short. Four to eight steps keeps the pacing snappy so a viewer can catch the whole thing in a scroll. If a flow is longer, split it or trim to the moments that sell it.</p></div>
+      </div>
+      <div class="acc-item">
+        <button class="acc-q" aria-expanded="false">Connect GitHub for pixel-true rendering<span class="plus" aria-hidden="true">+</span></button>
+        <div class="acc-a"><p>Point it at a public URL and it films what is live. Connect the repo and it can render your exact build, so the video matches the version you are about to ship, not whatever is cached in production.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ FOOTER ============================ -->
+<footer>
+  <div class="wrap foot">
+    <span class="brand" style="display:flex;align-items:center;gap:9px;">
+      <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="1.2" y="1.2" width="29.6" height="29.6" rx="8" stroke="#4f8cff" stroke-width="1.6"/><circle cx="16" cy="16" r="7.4" stroke="#6fa0ff" stroke-width="1.6"/><circle cx="16" cy="16" r="2.4" fill="#4f8cff"/></svg>
+      Captur'd
+    </span>
+    <a href="#how">How it works</a>
+    <a href="#results">Results</a>
+    <a href="#pricing">Pricing</a>
+    <a href="#help">Help</a>
+    <span class="sp">Captur'd by Sun Sponge</span>
+  </div>
+</footer>
+
+<!-- ============================ MODAL ============================ -->
+<div class="modal" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+  <div class="scrim" data-close></div>
+  <div class="card-m">
+    <button class="x" data-close aria-label="Close">&times;</button>
+    <h3 id="auth-title">Sign in to start</h3>
+    <p>Continue with Google to claim your free generation. Your repo and captures stay tied to your account.</p>
+    <button class="btn btn-google" data-auth>
+      <svg width="17" height="17" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.97 10.72a5.4 5.4 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1l3.01-2.33z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.46 3.44 1.35l2.58-2.58C13.47.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"/></svg>
+      Continue with Google
+    </button>
+    <p class="fine">One free generation, up to 20 shots. No card required.</p>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const CFG = window.CAPTURD_CONFIG || {};
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+
+  // apply config-driven copy
+  if (CFG.proPrice) $("#pro-price").innerHTML = CFG.proPrice + "<small> / month</small>";
+  if (CFG.freeShotLimit) $("#run-meta").textContent =
+    CFG.freeGenerations + " free generation on your account, up to " + CFG.freeShotLimit + " shots";
+
+  // ---- toast ----
+  let toastT;
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3200);
+  }
+
+  // ---- auth (Google) ----
+  let authed = false;
+  function startAuth() {
+    if (CFG.googleAuthUrl) { window.location.href = CFG.googleAuthUrl; return; }
+    // No backend wired yet: be honest, do not fake a login.
+    authed = true; // let the demo flow proceed locally so the owner can click through
+    closeModal();
+    toast("Demo: set CAPTURD_CONFIG.googleAuthUrl to wire real Google sign-in.");
+    $("#run-meta").textContent = "Signed in (demo). 1 free generation ready.";
+  }
+  $$("[data-auth]").forEach(b => b.addEventListener("click", startAuth));
+
+  // ---- modal ----
+  const modal = $("#auth-modal");
+  function openModal() { modal.classList.add("show"); document.body.style.overflow = "hidden"; }
+  function closeModal() { modal.classList.remove("show"); document.body.style.overflow = ""; }
+  $$("[data-close]").forEach(el => el.addEventListener("click", closeModal));
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+  // ---- GitHub connect ----
+  $("#gh-btn").addEventListener("click", () => {
+    if (CFG.githubConnectUrl) { window.location.href = CFG.githubConnectUrl; return; }
+    // Demo: reflect a connected state so the flow reads end to end.
+    $("#gh-name").textContent = "your-org/your-repo";
+    $("#gh-pill").classList.add("on");
+    $("#gh-btn").textContent = "Repo connected";
+    toast("Demo: set CAPTURD_CONFIG.githubConnectUrl to wire real GitHub OAuth.");
+  });
+
+  // ---- mode toggle ----
+  const modeNotes = {
+    agent: "The agent clicks through the flow on its own and hands you the finished video.",
+    demo: "You hit the mic and talk it through while it records. Nothing you say shows on screen."
+  };
+  let mode = "agent";
+  $$('.seg [data-mode]').forEach(btn => btn.addEventListener("click", () => {
+    mode = btn.dataset.mode;
+    $$('.seg [data-mode]').forEach(b => b.setAttribute("aria-pressed", String(b === btn)));
+    $("#mode-note").textContent = modeNotes[mode];
+  }));
+
+  // ---- result skill cards ----
+  let skill = "walkthrough";
+  $$("#cards .card").forEach(card => card.addEventListener("click", () => {
+    skill = card.dataset.skill;
+    $$("#cards .card").forEach(c => c.setAttribute("aria-pressed", String(c === card)));
+    // reflect the choice into the brief and bring the user to the flow
+    const intent = $("#intent");
+    if (!intent.value.trim() || intent.dataset.auto === "1") {
+      intent.value = card.dataset.intent; intent.dataset.auto = "1";
+    }
+    toast('Result set: "' + card.querySelector("h3").textContent + '". Adjust the brief and capture.');
+    $("#start").scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  $("#intent").addEventListener("input", () => { $("#intent").dataset.auto = "0"; });
+
+  // ---- status helpers ----
+  const status = $("#status"), statusInner = $("#status-inner");
+  function showStatus(html, isErr) {
+    statusInner.innerHTML = html;
+    status.classList.toggle("err", !!isErr);
+    status.classList.add("show");
+  }
+  function hideStatus() { status.classList.remove("show"); }
+
+  // ---- the capture run ----
+  $("#capture-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const site = $("#site").value.trim();
+    if (!site) { showStatus("Add your site or sitemap URL first.", true); $("#site").focus(); return; }
+    if (!authed && !CFG.apiBase) { openModal(); return; }
+    if (!authed) { openModal(); return; }
+
+    const payload = {
+      site, intent: $("#intent").value.trim(), mode, skill,
+      github: $("#gh-pill").classList.contains("on") ? $("#gh-name").textContent : null
+    };
+
+    if (!CFG.apiBase) {
+      // Honest: no backend wired. Say exactly what is missing, do not fake success.
+      showStatus(
+        '<span class="spin"></span><div><b>Front end ready.</b> This build has no backend wired yet. ' +
+        'Set <code style="font-family:var(--mono);color:var(--accent-2)">CAPTURD_CONFIG.apiBase</code> to a server that runs the Captur\'d engine ' +
+        '(<code style="font-family:var(--mono)">POST /generate</code>) and this button will kick off a real render.</div>', false);
+      setTimeout(() => { const s = $("#status .spin"); if (s) s.remove(); }, 900);
+      return;
+    }
+
+    // Real path.
+    showStatus('<span class="spin"></span><div>Starting your ' + skill + ' capture of <b>' + site + '</b>. A window will open and you will see it work.</div>', false);
+    $("#capture-btn").disabled = true;
+    try {
+      const res = await fetch(CFG.apiBase.replace(/\/$/, "") + "/generate", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      showStatus('<div><b>Capture started.</b> ' + (data.message || "Your video is rendering. We will email you the link.") + '</div>', false);
+    } catch (err) {
+      showStatus('<div>Could not reach the capture engine (' + err.message + '). Check the backend and try again.</div>', true);
+    } finally {
+      $("#capture-btn").disabled = false;
+    }
+  });
+
+  // ---- accordion ----
+  $$("#acc .acc-q").forEach(q => q.addEventListener("click", () => {
+    const item = q.parentElement, a = q.nextElementSibling, open = item.classList.contains("open");
+    if (open) { item.classList.remove("open"); q.setAttribute("aria-expanded", "false"); a.style.maxHeight = null; }
+    else { item.classList.add("open"); q.setAttribute("aria-expanded", "true"); a.style.maxHeight = a.scrollHeight + "px"; }
+  }));
+  // open the first item's height on load
+  const firstA = $("#acc .acc-item.open .acc-a"); if (firstA) firstA.style.maxHeight = firstA.scrollHeight + "px";
+
+  // ---- hero video: autoplay unless reduced motion ----
+  const v = $("#hero-video");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (v && !reduce) { v.play().catch(() => {}); }
+  $("#watch-demo").addEventListener("click", () => { if (v) v.play().catch(() => {}); });
+
+  // ---- reveal on scroll ----
+  if ("IntersectionObserver" in window && !reduce) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(en => { if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); } });
+    }, { threshold: 0.12 });
+    $$(".reveal").forEach(el => io.observe(el));
+  } else {
+    $$(".reveal").forEach(el => el.classList.add("in"));
+  }
+})();
+</script>
+</body>
+</html>
