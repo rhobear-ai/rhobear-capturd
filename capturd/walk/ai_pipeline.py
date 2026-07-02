@@ -261,7 +261,11 @@ def _extract_timeline_json(text: str) -> list[dict] | None:
 
 def _validate_timeline(entries: list[dict], step_count: int) -> list[dict]:
     """Drop/fix timeline entries that don't match the documented schema."""
-    allowed_actions = {"zoomTo", "panTo", "zoomToFit", "reset", None}
+    allowed_actions = {
+        "zoomTo", "panTo", "zoomToFit", "reset",
+        "spotlightOn", "spotlightOff", "hold",
+        None,
+    }
     out: list[dict] = []
     for raw in entries:
         if not isinstance(raw, dict):
@@ -281,16 +285,28 @@ def _validate_timeline(entries: list[dict], step_count: int) -> list[dict]:
                 entry["target"] = str(raw["target"])
             offset = raw.get("offset")
             if isinstance(offset, dict) and "x" in offset and "y" in offset:
-                entry["offset"] = {"x": offset["x"], "y": offset["y"]}
-            if action in ("zoomTo", "zoomToFit"):
+                entry["offset"] = {"x": float(offset["x"]), "y": float(offset["y"])}
+            if raw.get("zoomLevel") is not None and action in ("zoomTo", "zoomToFit"):
                 zoom = raw.get("zoomLevel")
                 if isinstance(zoom, (int, float)):
-                    entry["zoomLevel"] = max(1.0, min(2.0, float(zoom)))
+                    entry["zoomLevel"] = max(1.0, min(2.5, float(zoom)))
             duration = raw.get("duration")
             if isinstance(duration, (int, float)):
-                entry["duration"] = int(max(300, min(800, duration)))
+                # Cinematic style allows up to 1000ms
+                entry["duration"] = int(max(200, min(1000, duration)))
             else:
                 entry["duration"] = 500
+            easing = raw.get("easing")
+            if isinstance(easing, str) and easing.strip():
+                entry["easing"] = easing.strip()
+            # Voice-sync alignment
+            t_start = raw.get("tStartMs")
+            if isinstance(t_start, (int, float)) and t_start >= 0:
+                entry["tStartMs"] = int(t_start)
+            # Spotlight intensity (for cinematic / professional styles)
+            intensity = raw.get("intensity")
+            if isinstance(intensity, (int, float)):
+                entry["intensity"] = max(0.3, min(1.0, float(intensity)))
         out.append(entry)
     out.sort(key=lambda e: e["stepIndex"])
     return out
@@ -584,68 +600,101 @@ class DemoAI:
     async def _generate_animation_timeline(self, client, spec: dict) -> None:
         """Direct the camera. LLM writes an AnimationKeyframe timeline; viewer executes it.
 
-        TODO(W2) — dominance features to add (spine has the contracts; wire them):
-
-        * **Semantic zoom** — anchor keyframes to ``ZoomTarget.selector``
-          (element-anchored), not raw pixel coords. Schema type ready.
-        * **Spotlight action** — emit ``CameraAction.SPOTLIGHT_ON/OFF`` around
-          the focus element so the viewer dims + blurs everything else.
-        * **Voice-sync alignment** — read ``step.voiceoverWords`` (W3 output)
-          and set ``AnimationKeyframe.tStartMs`` to the word-arrival offset so
-          the camera lands on the noun ("click **Buy Now**") in sync with the
-          narrator's utterance.
-        * **Style tokens** — `snappy` / `smooth` / `professional` / `cinematic`
-          change easing curves, hold durations, and spotlight intensity. The
-          LLM prompt should switch tone by ``AIAnnotations.style``.
-        * **Adaptive per viewport** — smaller zoom on mobile (viewport already
-          zoomed); harder zoom on desktop for small targets.
-
-        Reference: :class:`capturd.walk.schema.AnimationKeyframe`,
-        :class:`capturd.walk.schema.CameraAction`, and Screen Studio's
-        camera-timeline shape for polish inspiration (they don't have
-        semantic anchoring — that's ours).
+        Produces a complete timeline per step with:
+        - SPOTLIGHT_ON bracketing each ZOOM_TO
+        - ZOOM_TO anchored to the element selector (semantic anchoring)
+        - HOLD for annotation duration
+        - SPOTLIGHT_OFF before next step transition
+        - Voice-sync alignment via voiceoverWords (tStartMs)
+        - Style-aware easing/duration (snappy/smooth/professional/cinematic)
         """
-        steps: list[dict] = spec["steps"]
+        steps = spec["steps"]
+        if not steps:
+            _ai_annotations(spec)["animationTimeline"] = []
+            return
+
+        ann = _ai_annotations(spec)
+        style = ann.get("style", "smooth")
+        sp = _STYLE_PARAMS.get(style, _STYLE_PARAMS["smooth"])
+
         step_descriptions = []
         for s in steps:
             t = (s.get("interaction") or {}).get("target") or {}
             r = t.get("boundingRect") or {}
             h = (s.get("interaction") or {}).get("hotspot") or {}
-            ann = s.get("annotation") or _fallback_annotation(s)
-            step_descriptions.append(
-                f"step {s.get('index', 0)}: "
-                f"selector=\"{t.get('selector', '')}\" "
-                f"tag={t.get('tagName', '')} "
-                f"text=\"{t.get('text', '')}\" "
-                f"rect=({r.get('x', 0)},{r.get('y', 0)},{r.get('width', 0)},{r.get('height', 0)}) "
-                f"hotspot=({round(h.get('xPct', 0), 1)},{round(h.get('yPct', 0), 1)}) "
-                f"annotation=\"{ann}\""
+            ann_text = s.get("annotation") or _fallback_annotation(s)
+            vw = s.get("voiceoverWords")
+            desc = (
+                "step %d: selector=%r tag=%r text=%r "
+                "rect=(%r,%r,%r,%r) hotspot=(%r,%r) annotation=%r"
+                % (
+                    s.get("index", 0),
+                    t.get("selector", ""), t.get("tagName", ""),
+                    t.get("text", ""),
+                    r.get("x", 0), r.get("y", 0),
+                    r.get("width", 0), r.get("height", 0),
+                    round(h.get("xPct", 0), 1),
+                    round(h.get("yPct", 0), 1),
+                    ann_text,
+                )
             )
+            if vw and isinstance(vw, list) and len(vw) > 0:
+                words = [
+                    "%s@%dms" % (w.get("word", ""), w.get("tStartMs", 0))
+                    for w in vw if isinstance(w, dict)
+                ]
+                desc += " voiceoverWords=[%s]" % ", ".join(words)
+            step_descriptions.append(desc)
+
         viewport = spec.get("viewport") or {"width": 1440, "height": 900}
         prompt = (
-            "You are directing a camera for a product demo. Respond with valid "
-            "JSON only — do NOT include any reasoning, commentary, or markdown "
-            "fences. Begin your reply with '[' and end with ']'.\n\n"
-            f"Viewport: {viewport.get('width', 1440)}x{viewport.get('height', 900)}\n"
-            f"Steps ({len(steps)} total):\n" + "\n".join(step_descriptions) + "\n\n"
-            "For each step, decide what camera action to take. Options:\n"
-            '- "zoomTo": zoom into a specific element to highlight it\n'
-            '- "panTo": pan the view to center a specific element\n'
-            '- "zoomToFit": fit the current focused element comfortably in view\n'
-            '- "reset": return to full-page view\n'
-            '- null: no camera change\n\n'
-            "Output a JSON array. Each entry must have: stepIndex (int), action "
-            "(string or null), target (CSS selector, string), offset "
-            "{x, y} (hotspot percentages, numbers), zoomLevel (1.0-2.0, only "
-            "for zoomTo/zoomToFit), duration (ms, 300-800).\n\n"
-            "Example:\n"
-            '[{"stepIndex":0,"action":"zoomTo","target":"#get-started",'
-            '"offset":{"x":50,"y":50},"zoomLevel":1.5,"duration":600}]\n\n'
+            "You are directing a cinematic camera for a product demo. Respond "
+            "with valid JSON only \u2014 do NOT include any reasoning, commentary, "
+            "or markdown fences. Begin your reply with '[' and end with ']'.\n\n"
+            "Style: %s \u2014 use %sms zoom durations, %r easing.\n"
+            "Spotlight intensity: %.1f.\n"
+            "Hold duration per step: %dms.\n"
+            "Viewport: %dx%d\n"
+            "Steps (%d total):\n%s\n\n"
+            "For EACH step, emit 3-4 keyframes in this exact order:\n"
+            '1. "spotlightOn" \u2014 dim everything except the interaction target '
+            "(use the element's CSS selector as target, add intensity field).\n"
+            '2. "zoomTo" \u2014 zoom into the target at the hotspot offset, '
+            "zoomLevel 1.5-2.0 (aim higher for small elements).\n"
+            '3. "hold" \u2014 pause for the annotation/voiceover read time.\n'
+            '4. "spotlightOff" \u2014 remove the spotlight before next step.\n\n'
+            "Keyframe fields: stepIndex (int), action (string), target (CSS "
+            "selector), offset {x, y} (hotspot percentages), zoomLevel (number, "
+            "for zoomTo only), duration (ms), easing (string, e.g. %r), "
+            "intensity (0.3-1.0, for spotlightOn only), tStartMs (ms offset "
+            "inside step, only if voiceoverWords are present \u2014 align the "
+            "zoomTo arrival to the key noun's tStartMs).\n\n"
+            "Example for a snappy 3-step demo:\n"
+            '[{"stepIndex":0,"action":"spotlightOn","target":"#get-started",'
+            '"duration":200,"intensity":0.75},\n'
+            ' {"stepIndex":0,"action":"zoomTo","target":"#get-started",'
+            '"offset":{"x":50,"y":50},"zoomLevel":1.5,"duration":400,'
+            '"easing":"ease-out"},\n'
+            ' {"stepIndex":0,"action":"hold","duration":2500},\n'
+            ' {"stepIndex":0,"action":"spotlightOff","duration":200},\n'
+            ' {"stepIndex":1,"action":"spotlightOn","target":".cta-button",'
+            '"duration":200,"intensity":0.75},\n'
+            ' {"stepIndex":1,"action":"zoomTo","target":".cta-button",'
+            '"offset":{"x":50,"y":50},"zoomLevel":1.8,"duration":400,'
+            '"easing":"ease-out"},\n'
+            ' {"stepIndex":1,"action":"hold","duration":2000},\n'
+            ' {"stepIndex":1,"action":"spotlightOff","duration":200}]\n\n'
             "Output ONLY the JSON array, no other text."
+        ) % (
+            style,
+            sp["zoom_duration"], sp["easing"],
+            sp["spotlight_intensity"],
+            sp["hold_duration"],
+            viewport.get("width", 1440), viewport.get("height", 900),
+            len(steps), "\n".join(step_descriptions),
+            sp["easing"],
         )
-        # Retry up to 3x. The reasoning model occasionally burns its token
-        # budget on internal thinking and emits a truncated JSON blob. A second
-        # attempt usually succeeds because the warmup cost is paid.
+        # Retry up to 3x.
         text = ""
         for attempt in range(3):
             try:
@@ -653,7 +702,7 @@ class DemoAI:
                     client,
                     model=self.model_text,
                     prompt=prompt,
-                    max_tokens=max(self.max_tokens_text, 1500),
+                    max_tokens=max(self.max_tokens_text, 2000),
                 )
             except Exception as exc:
                 logger.warning("timeline LLM failed (attempt %d): %s", attempt + 1, exc)
@@ -662,11 +711,16 @@ class DemoAI:
             if parsed:
                 break
             logger.warning(
-                "timeline parse failed (attempt %d) — reply was %d chars; retrying",
+                "timeline parse failed (attempt %d) \u2014 reply was %d chars; retrying",
                 attempt + 1, len(text),
             )
         parsed = _extract_timeline_json(text) if text else None
         timeline = _validate_timeline(parsed or [], len(steps))
+
+        # Fall back to deterministic timeline if LLM produced nothing usable
+        if not timeline:
+            timeline = _deterministic_timeline(spec)
+
         _ai_annotations(spec)["animationTimeline"] = timeline
 
     # ---- misc --------------------------------------------------------------
@@ -806,6 +860,163 @@ class DemoEnrichManager:
                 job["elapsedS"] = round(elapsed_s, 2)
             if finished_at:
                 job["finishedAt"] = _utc_now_iso()
+
+
+# ---------------------------------------------------------------------------
+# Style parameter lookup — durations, easings, intensities per style token
+# ---------------------------------------------------------------------------
+
+_STYLE_PARAMS: dict[str, dict] = {
+    "snappy": {
+        "zoom_duration": "300-400",
+        "easing": "ease-out",
+        "hold_duration": 2000,
+        "spotlight_intensity": 0.7,
+    },
+    "smooth": {
+        "zoom_duration": "500-700",
+        "easing": "ease-in-out",
+        "hold_duration": 2500,
+        "spotlight_intensity": 0.75,
+    },
+    "professional": {
+        "zoom_duration": "500",
+        "easing": "cubic-bezier(0.4,0,0.2,1)",
+        "hold_duration": 2500,
+        "spotlight_intensity": 0.8,
+    },
+    "cinematic": {
+        "zoom_duration": "700-1000",
+        "easing": "ease-in-out",
+        "hold_duration": 3000,
+        "spotlight_intensity": 0.9,
+    },
+}
+
+
+def _deterministic_timeline(spec: dict) -> list[dict]:
+    """Deterministic fallback timeline when the LLM produces nothing usable.
+
+    Generates 3-4 keyframes per step (spotlightOn → zoomTo → hold → spotlightOff)
+    with style-aware durations. Used only as a safety net — the LLM output is
+    preferred whenever parseable.
+    """
+    steps: list[dict] = spec.get("steps") or []
+    if not steps:
+        return []
+
+    ann = _ai_annotations(spec)
+    style = ann.get("style", "smooth")
+    sp = _STYLE_PARAMS.get(style, _STYLE_PARAMS["smooth"])
+
+    # Parse zoom duration range from the style description
+    zd = sp["zoom_duration"]
+    if "-" in zd:
+        lo, hi = zd.split("-")
+        zoom_dur = (int(lo) + int(hi)) // 2
+    else:
+        zoom_dur = int(zd)
+    hold_dur = sp["hold_duration"]
+    easing = sp["easing"]
+    intensity = sp["spotlight_intensity"]
+
+    timeline: list[dict] = []
+    for s in steps:
+        idx = s.get("index", 0)
+        t = (s.get("interaction") or {}).get("target") or {}
+        sel = t.get("selector") or "body"
+        h = (s.get("interaction") or {}).get("hotspot") or {}
+        xPct = h.get("xPct", 50)
+        yPct = h.get("yPct", 50)
+
+        # Detect target size to scale zoom level
+        r = t.get("boundingRect") or {}
+        w = r.get("width", 0)
+        h_ = r.get("height", 0)
+        vp = spec.get("viewport") or {}
+        vp_w = vp.get("width", 1440)
+        vp_h = vp.get("height", 900)
+        rel_area = (w * h_) / (vp_w * vp_h) if (vp_w * vp_h) > 0 else 0.05
+        # Smaller elements get higher zoom
+        if rel_area < 0.02:
+            zoom_level = 2.0
+        elif rel_area < 0.08:
+            zoom_level = 1.7
+        elif rel_area < 0.2:
+            zoom_level = 1.5
+        else:
+            zoom_level = 1.3
+
+        # Voice-sync: find the focus noun tStartMs if voiceoverWords present
+        vw = s.get("voiceoverWords")
+        t_start_ms = None
+        if vw and isinstance(vw, list) and len(vw) > 0:
+            ann_text = (s.get("annotation") or "").lower()
+            focus_words = _extract_focus_nouns(ann_text)
+            for w in vw:
+                if isinstance(w, dict) and w.get("word", "").lower() in focus_words:
+                    t_start_ms = w.get("tStartMs")
+                    break
+
+        timeline.append({
+            "stepIndex": idx,
+            "action": "spotlightOn",
+            "target": sel,
+            "duration": 200,
+            "easing": "ease-out",
+            "intensity": intensity,
+        })
+        kf_zoom: dict[str, Any] = {
+            "stepIndex": idx,
+            "action": "zoomTo",
+            "target": sel,
+            "offset": {"x": xPct, "y": yPct},
+            "zoomLevel": zoom_level,
+            "duration": zoom_dur,
+            "easing": easing,
+        }
+        if t_start_ms is not None:
+            kf_zoom["tStartMs"] = t_start_ms
+        timeline.append(kf_zoom)
+        timeline.append({
+            "stepIndex": idx,
+            "action": "hold",
+            "duration": hold_dur,
+        })
+        timeline.append({
+            "stepIndex": idx,
+            "action": "spotlightOff",
+            "duration": 200,
+            "easing": "ease-in",
+        })
+
+    return timeline
+
+
+def _extract_focus_nouns(annotation: str) -> set[str]:
+    """Extract likely focus nouns from an annotation sentence.
+
+    Heuristic: capitalized words, words after 'click'/'select'/'open',
+    and nouns longer than 2 chars that appear near the verb.
+    """
+    words = annotation.strip().rstrip(".!?").split()
+    focus: set[str] = set()
+    # Capitalized proper nouns (but not first word)
+    for i, w in enumerate(words):
+        if i > 0 and w[0].isupper() and len(w) > 2:
+            focus.add(w.lower())
+    # Words after action verbs
+    action_verbs = {"click", "select", "open", "tap", "press", "choose", "enter", "type", "pick"}
+    prev_idx = -1
+    for word in words:
+        clean = word.lower().strip(".,;:'\"")
+        if prev_idx >= 0:
+            if len(clean) > 2:
+                focus.add(clean)
+            prev_idx = -1
+        if clean in action_verbs:
+            prev_idx = len(focus)
+    return focus
 
 
 # ---------------------------------------------------------------------------
