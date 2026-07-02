@@ -203,6 +203,9 @@ class DemoStep:
     videoChunkStartMs: int | None = None
     videoChunkEndMs: int | None = None
 
+    # Voice direction (push-to-talk transcript for the LLM to consume)
+    userDirection: str | None = None
+
     # AI enrichment
     annotation: str | None = None
     voiceoverPath: str | None = None      # local path to per-step audio

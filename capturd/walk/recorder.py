@@ -32,6 +32,7 @@ from capturd.walk.schema import (
     Hotspot,
     Interaction,
 )
+from capturd.walk.voice import MIC_BUTTON_JS, VoiceConfig, VoiceLoop, VoiceLoopError
 
 logger = logging.getLogger(__name__)
 
@@ -431,6 +432,8 @@ class DemoRecorder:
     * **Workflow (voice-dialog) mode** — TODO(W7). Human clicks; between
       clicks the agent asks "what are you illustrating?" via TTS
       (:mod:`capturd.walk.voice`) and extracts intent from the spoken reply.
+      The voice loop primitives (push-to-talk, reply) are implemented in W6;
+      W7 composes them into the dialog loop.
 
     Content-mode detection — W1. At each step, probe:
       - hasCanvas + canvasAreaPct (largest <canvas> area / viewport area)
@@ -482,6 +485,9 @@ class DemoRecorder:
         self._stopped = threading.Event()
         self._last_url: str | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Voice — enabled when payload["voice"] is True.
+        self.voice_loop: VoiceLoop | None = None
+        self._voice_transcripts: list[str] = []  # accumulated transcripts
 
     # ----- lifecycle ---------------------------------------------------------
 
@@ -762,15 +768,46 @@ class DemoRecorder:
 
         # Bridge: JS calls window.recordClick(payload) → Python callback.
         await self._page.expose_function("recordClick", self._on_click)
+
+        # Voice push-to-talk bridges (if voice_loop is active).
+        if self.voice_loop is not None:
+            await self._page.expose_function("__demoMicStart", self.voice_loop._js_mic_start)
+            await self._page.expose_function("__demoMicStop", self.voice_loop._js_mic_stop)
+            # Callback: JS hands transcript back to Python after mic release.
+            await self._page.evaluate("""
+                window.__demoOnVoiceTranscript = (text) => {
+                    window.__demoRecorderLastVoiceTranscript = text;
+                    // Also relay through recordClick shape so the recorder
+                    // picks it up as a userDirection on the next step.
+                    if (typeof window.recordClick === 'function') {
+                        window.recordClick({
+                            type: 'voice',
+                            transcript: text,
+                            pageUrl: location.href,
+                            pageTitle: document.title,
+                            timestamp: Date.now(),
+                        });
+                    }
+                };
+            """)
+
         # Init script re-installs overlay on every navigation.
-        await self._page.add_init_script(OVERLAY_JS)
+        await self._page.add_init_script(OVERLAY_JS + "\n" + MIC_BUTTON_JS)
 
         await self._page.goto(self.url, wait_until="domcontentloaded")
         self._last_url = self._page.url
         self._started_at_ms = int(time.time() * 1000)
 
+        # Start voice loop if enabled.
+        if self.voice_loop is not None:
+            await self.voice_loop.start(
+                on_utterance=lambda text: self._voice_transcripts.append(text),
+                page=self._page,
+            )
+
         self._capture_task = asyncio.create_task(self._capture_loop(), name=f"demo-cap-{self.session_id}")
-        logger.info("demo recorder started: session=%s url=%s", self.session_id, self.url)
+        logger.info("demo recorder started: session=%s url=%s voice=%s",
+                     self.session_id, self.url, self.voice_loop is not None)
 
     def stop(self) -> DemoSpec:
         """Stop the recorder from any thread/loop and return the persisted spec.
@@ -797,6 +834,26 @@ class DemoRecorder:
             await asyncio.wait_for(self._capture_task, timeout=5.0)
         except asyncio.TimeoutError:
             self._capture_task.cancel()
+        if self.voice_loop is not None:
+            try:
+                await self.voice_loop.stop()
+            except Exception as exc:
+                logger.warning("error stopping voice loop: %s", exc)
+        try:
+            if self._context:
+                await self._context.close()
+        except Exception:
+            pass
+        try:
+            if self._browser:
+                await self._browser.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
+                await self._playwright.stop()
+        except Exception:
+            pass
         await self._teardown_browser()
         self._write_outputs()
         logger.info(
@@ -847,8 +904,10 @@ class DemoRecorder:
 
             step_index = len(self.spec.steps)
             timestamp_ms = int(time.time() * 1000) - (self._started_at_ms or 0)
+            payload_type = payload.get("type", "click")
+            is_voice = payload_type == "voice"
 
-            # Screenshot AFTER the click so we capture the post-click state.
+            # Screenshot AFTER the event so we capture the post-event state.
             try:
                 png_bytes = await self._page.screenshot(full_page=False, type="png")
             except Exception as exc:
@@ -860,23 +919,45 @@ class DemoRecorder:
             if png_bytes:
                 shot_path.write_bytes(png_bytes)
 
-            step = DemoStep(
-                index=step_index,
-                timestamp=timestamp_ms,
-                pageUrl=payload.get("pageUrl") or self._safe_url(),
-                pageTitle=payload.get("pageTitle") or (await self._safe_title()),
-                interaction=Interaction(
-                    type=payload.get("type", "click"),
-                    target=payload.get("target", {}),
-                    hotspot=payload.get("hotspot", {"xPct": 0, "yPct": 0}),
-                    value=payload.get("value"),
-                ),
-                screenshotBase64=None,  # stored on disk via screenshotPath only (avoids JSON bloat)
-                screenshotPath=str(shot_path.relative_to(self.output_dir.parent))
-                if png_bytes
-                else None,
-                screenshotError=None if png_bytes else "screenshot capture failed",
-            )
+            if is_voice:
+                # Voice transcript — stored as userDirection on a marker step.
+                transcript = payload.get("transcript", "")
+                step = DemoStep(
+                    index=step_index,
+                    timestamp=timestamp_ms,
+                    pageUrl=payload.get("pageUrl") or self._safe_url(),
+                    pageTitle=payload.get("pageTitle") or (await self._safe_title()),
+                    interaction=Interaction(
+                        type="voice",
+                        target={},
+                        hotspot={"xPct": 0, "yPct": 0},
+                        value=transcript,
+                    ),
+                    userDirection=transcript,
+                    screenshotBase64=None,
+                    screenshotPath=str(shot_path.relative_to(self.output_dir.parent))
+                    if png_bytes
+                    else None,
+                    screenshotError=None if png_bytes else "screenshot capture failed",
+                )
+            else:
+                step = DemoStep(
+                    index=step_index,
+                    timestamp=timestamp_ms,
+                    pageUrl=payload.get("pageUrl") or self._safe_url(),
+                    pageTitle=payload.get("pageTitle") or (await self._safe_title()),
+                    interaction=Interaction(
+                        type=payload_type,
+                        target=payload.get("target", {}),
+                        hotspot=payload.get("hotspot", {"xPct": 0, "yPct": 0}),
+                        value=payload.get("value"),
+                    ),
+                    screenshotBase64=None,
+                    screenshotPath=str(shot_path.relative_to(self.output_dir.parent))
+                    if png_bytes
+                    else None,
+                    screenshotError=None if png_bytes else "screenshot capture failed",
+                )
             self.spec.steps.append(step)
             self._last_url = step.pageUrl
 
@@ -933,6 +1014,7 @@ class DemoManager:
         self.output_root.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, DemoRecorder] = {}
         self._lock = threading.Lock()
+        self._voice_config: VoiceConfig | None = None  # set by start() when voice=True
 
     def new_session_id(self) -> str:
         return uuid.uuid4().hex[:12]
@@ -957,6 +1039,7 @@ class DemoManager:
         session_id = payload.get("sessionId") or self.new_session_id()
         out_dir = self.output_root / session_id
 
+        voice_enabled = bool(payload.get("voice"))
         recorder = DemoRecorder(
             session_id=session_id,
             url=url,
@@ -965,6 +1048,14 @@ class DemoManager:
             viewport=viewport,
             output_dir=out_dir,
         )
+        if voice_enabled:
+            try:
+                voice_cfg = VoiceConfig(
+                    workflow_mode=bool(payload.get("workflowMode")),
+                )
+                recorder.voice_loop = VoiceLoop(config=voice_cfg)
+            except VoiceLoopError:
+                logger.warning("voice mode requested but voice extras not installed")
         with self._lock:
             self._sessions[session_id] = recorder
         return recorder, session_id, mode
@@ -1028,5 +1119,8 @@ __all__ = [
     "_detect_content_mode",
     "_classify_content_mode",
     "_parse_agent_reply",
+    "VoiceConfig",
+    "VoiceLoop",
+    "VoiceLoopError",
     "run_async",
 ]
