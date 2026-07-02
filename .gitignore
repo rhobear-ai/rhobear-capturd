@@ -10,3 +10,6 @@ build/
 .ruff_cache/
 captures/
 *.zip
+msix-staging/
+packaging/ffmpeg/
+packaging/capturd.ico
