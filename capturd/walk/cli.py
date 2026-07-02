@@ -66,13 +66,119 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    if args.cmd == "record":
-        return _cmd_record(args)
+    dispatch = {
+        "record": _cmd_record,
+        "stop": _cmd_stop,
+        "status": _cmd_status,
+        "list": _cmd_list,
+        "export": _cmd_export,
+        "edit": _cmd_edit,
+        "delete": _cmd_delete,
+    }
+    return dispatch[args.cmd](args)
 
-    # Other subcommands — spine stubs until W2-W4.
-    sys.stderr.write(
-        f"[spine-stub] `capturd walk {args.cmd}` — implementation lands in W2-W4.\n"
-    )
+
+def _forge():
+    from capturd.walk.coordinator import DemoForge
+
+    return DemoForge()
+
+
+def _cmd_stop(args: argparse.Namespace) -> int:
+    """Kick off enrichment for a recorded session (its demo.json on disk)."""
+    from capturd.walk.coordinator import DemoForgeError
+
+    forge = _forge()
+    try:
+        job = forge.enrich_demo(args.session_id)
+    except DemoForgeError as exc:
+        sys.stderr.write(f"stop failed: {exc}\n")
+        return 1
+    sys.stdout.write(json.dumps(job, indent=2) + "\n")
+    return 0
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    from capturd.walk.coordinator import DemoForgeError
+
+    try:
+        status = _forge().get_status(args.demo_id)
+    except DemoForgeError as exc:
+        sys.stderr.write(f"status failed: {exc}\n")
+        return 1
+    sys.stdout.write(json.dumps(status, indent=2) + "\n")
+    return 0
+
+
+def _cmd_list(args: argparse.Namespace) -> int:
+    demos = _forge().list_demos()
+    if args.json:
+        sys.stdout.write(json.dumps([d.__dict__ for d in demos], indent=2) + "\n")
+        return 0
+    if not demos:
+        sys.stdout.write("no demos recorded yet\n")
+        return 0
+    for d in demos:
+        voice = " voice" if d.has_voiceover else ""
+        sys.stdout.write(
+            f"{d.demo_id}  {d.status:9s} {d.step_count:3d} steps{voice}  "
+            f"{d.name}\n"
+        )
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    from capturd.walk.coordinator import DemoForgeError
+
+    try:
+        out = _forge().export_demo(args.demo_id, fmt=args.format)
+    except DemoForgeError as exc:
+        sys.stderr.write(f"export failed: {exc}\n")
+        return 1
+    if args.out:
+        import shutil
+        dest = args.out
+        shutil.copyfile(out, dest)
+        out = dest
+    sys.stdout.write(json.dumps({"path": str(out), "format": args.format}, indent=2) + "\n")
+    return 0
+
+
+def _cmd_edit(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from capturd.walk.coordinator import DemoForgeError
+
+    if args.annotation is None and not args.regenerate_voice:
+        sys.stderr.write("nothing to edit — pass --annotation and/or --regenerate-voice\n")
+        return 1
+    try:
+        step = asyncio.run(_forge().edit_step(
+            args.demo_id,
+            args.step,
+            annotation=args.annotation,
+            regenerate_voice=args.regenerate_voice,
+        ))
+    except DemoForgeError as exc:
+        sys.stderr.write(f"edit failed: {exc}\n")
+        return 1
+    slim = {k: v for k, v in step.items() if k not in ("screenshotBase64", "voiceoverBase64")}
+    sys.stdout.write(json.dumps({"ok": True, "step": slim}, indent=2) + "\n")
+    return 0
+
+
+def _cmd_delete(args: argparse.Namespace) -> int:
+    from capturd.walk.coordinator import DemoForgeError
+
+    try:
+        ok = _forge().delete_demo(args.demo_id)
+    except DemoForgeError as exc:
+        sys.stderr.write(f"delete failed: {exc}\n")
+        return 1
+    if not ok:
+        sys.stderr.write(f"demo not found: {args.demo_id}\n")
+        return 1
+    sys.stdout.write(json.dumps({"ok": True, "demoId": args.demo_id}, indent=2) + "\n")
     return 0
 
 

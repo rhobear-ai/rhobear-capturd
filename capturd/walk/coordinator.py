@@ -549,10 +549,11 @@ class DemoForge:
         if "voice" in aspects:
             text = (steps[step_index].get("annotation") or "").strip()
             if text:
-                audio = await _synthesize_one(text, voice=ai.voice)
+                audio, words = await _synthesize_one(text, voice=ai.voice)
                 if audio:
-                    import base64 as _b64
-                    steps[step_index]["voiceoverBase64"] = _b64.b64encode(audio).decode("ascii")
+                    steps[step_index]["voiceoverBase64"] = base64.b64encode(audio).decode("ascii")
+                    if words:
+                        steps[step_index]["voiceoverWords"] = [asdict(wt) for wt in words]
                     results.append("voice")
 
         if "cursor" in aspects:
@@ -572,13 +573,17 @@ class DemoForge:
     # ------------------------------------------------------------------
 
     def export_demo(self, demo_id: str, *, fmt: str = "html") -> Path:
-        """Render ``demo_id`` as a self-contained HTML viewer file.
+        """Render ``demo_id`` as an HTML viewer, MP4 video, or GIF.
 
-        Screenshots are inlined as base64 data URIs so the resulting
-        ``export.html`` has zero external dependencies — open it from
-        ``file://`` and it works.
+        ``html`` — self-contained viewer file. Screenshots are inlined as
+        base64 data URIs so ``export.html`` has zero external dependencies.
+
+        ``mp4`` / ``gif`` — the deterministic export renderer inside the
+        viewer is driven frame-by-frame in headless Chromium and encoded by
+        ffmpeg; voiceover audio is muxed at the timeline offsets.
         """
-        if fmt != "html":
+        fmt = (fmt or "html").lower()
+        if fmt not in {"html", "mp4", "gif"}:
             raise DemoForgeError(f"unsupported export format: {fmt!r}")
         if not self.viewer_template.is_file():
             raise DemoForgeError(f"viewer template not found: {self.viewer_template}")
@@ -593,12 +598,21 @@ class DemoForge:
         # NOT interpret backslash escapes (``\1``, ``\g<name>``, etc.) inside
         # the JSON. Without this the spec's screenShotPath values get mangled.
         exported = _SCRIPT_BLOCK_RE.sub(lambda _m: new_block, template, count=1)
-        out_path = self.demo_dir(demo_id) / "export.html"
+        html_path = self.demo_dir(demo_id) / "export.html"
         # Write bytes directly with LF line endings — the template's
         # regex matches LF, and we want the export to be portable across
         # platforms. ``write_text`` would translate to CRLF on Windows.
-        out_path.write_bytes(exported.encode("utf-8"))
-        return out_path
+        html_path.write_bytes(exported.encode("utf-8"))
+        if fmt == "html":
+            return html_path
+
+        from capturd.walk.exporter import DemoExportError, export_video
+
+        out_path = self.demo_dir(demo_id) / f"walkthrough.{fmt}"
+        try:
+            return export_video(data, html_path, out_path, fmt=fmt)
+        except DemoExportError as exc:
+            raise DemoForgeError(str(exc)) from exc
 
     def _inline_screenshots(self, data: dict[str, Any], demo_id: str) -> None:
         """Mutate ``data`` so each step has ``screenshotBase64`` populated."""

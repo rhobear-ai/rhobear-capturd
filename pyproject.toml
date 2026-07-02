@@ -56,6 +56,9 @@ packages = ["capturd", "capturd.shots", "capturd.walk", "capturd.mcp"]
 "capturd.walk" = ["templates/*.html"]
 
 [tool.pytest.ini_options]
+# e2e tests need network + browser + a configured AI gateway; run them
+# explicitly with `pytest -m e2e`.
+addopts = "-m 'not e2e'"
 markers = [
     "slow: marks tests as slow (browser-dependent, skipped by default)",
     "e2e: marks end-to-end proof tests (network + browser + AI pipeline — deselected by default)",

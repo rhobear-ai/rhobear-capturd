@@ -79,7 +79,8 @@
     }
 
     /* ------------------------------------------------------------------ */
-    /*  Cursor                                                             */
+    /*  Cursor — lives INSIDE the panzoom layer (content space) so it      */
+    /*  stays glued to the page under any camera zoom/pan.                 */
     /* ------------------------------------------------------------------ */
     #cursor {
       position: absolute;
@@ -89,9 +90,43 @@
       opacity: 0;
       transition: opacity 120ms ease-out;
       filter: drop-shadow(0 1px 2px rgba(0,0,0,0.55));
-      z-index: 5;
+      z-index: 6;
     }
     #cursor.visible { opacity: 1; }
+
+    /* Caption pill — rendered during export so the MP4 carries the        */
+    /* step narration as an on-screen callout.                             */
+    #export-caption {
+      position: absolute;
+      left: 50%; bottom: 36px;
+      transform: translateX(-50%);
+      max-width: 72%;
+      padding: 10px 22px;
+      border-radius: 999px;
+      background: rgba(12, 14, 18, 0.82);
+      color: #f2f4f7;
+      font-size: 17px;
+      font-weight: 500;
+      line-height: 1.4;
+      text-align: center;
+      letter-spacing: 0.01em;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+      backdrop-filter: blur(6px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 7;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Export mode: kill every wall-clock animation/transition — the       */
+    /* deterministic renderer owns all motion via seek(tMs).               */
+    body.export-mode #controls { display: none; }
+    body.export-mode *, body.export-mode *::before, body.export-mode *::after {
+      transition: none !important;
+      animation: none !important;
+    }
 
     /* ------------------------------------------------------------------ */
     /*  Panzoom layer — transformed by the panzoom engine                  */
@@ -221,19 +256,21 @@
   <div id="viewer" role="application" aria-label="DemoForge viewer">
     <div id="screenshot-container" aria-live="polite">
       <div id="panzoom-layer">
+        <img id="screenshot-prev" alt="" style="position:absolute; inset:0; width:100%; height:100%; opacity:0; pointer-events:none;" />
         <img id="screenshot" alt="" />
         <svg id="hotspot-layer" aria-hidden="true">
           <circle id="hotspot-ring" cx="-9999" cy="-9999" r="14" />
           <circle id="hotspot"      cx="-9999" cy="-9999" r="14" fill="#ff3b30" fill-opacity="0.85" />
         </svg>
         <div id="spotlight-overlay" aria-hidden="true"></div>
+        <div id="cursor" aria-hidden="true">
+          <svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M0 0 L0 19 L5 14.5 L8.2 22 L11 20.7 L7.8 13.2 L14 13 Z"
+                  fill="#ffffff" stroke="#1a1d22" stroke-width="1.2" stroke-linejoin="round" />
+          </svg>
+        </div>
       </div>
-      <div id="cursor" aria-hidden="true">
-        <svg width="18" height="24" viewBox="0 0 18 24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M0 0 L0 19 L5 14.5 L8.2 22 L11 20.7 L7.8 13.2 L14 13 Z"
-                fill="#ffffff" stroke="#1a1d22" stroke-width="1.2" stroke-linejoin="round" />
-        </svg>
-      </div>
+      <div id="export-caption" aria-hidden="true"></div>
 
       <div id="empty-state" role="alert">
         <h1>No demo loaded</h1>
@@ -390,6 +427,9 @@
       audio: null,          // HTMLAudioElement if voiceover is loaded
       autoPlayTimeout: null,
       panzoom: null,        // panzoom API instance
+      fit: null,            // {cw, ch, scale, x, y} — camera home transform
+      _cameraRaf: null,     // in-flight camera animation frame handle
+      exportMode: false,    // deterministic export renderer owns the DOM
       _sequenceTimer: null, // current timeline sequence timeout
       _sequenceCancelled: false, // user-interrupt flag
     };
@@ -586,9 +626,6 @@
       try {
         const el = new Audio('data:audio/mpeg;base64,' + audio);
         el.volume = 1.0;
-        el.addEventListener('ended', () => {
-          if (STATE.isPlaying) scheduleAutoAdvance();
-        });
         STATE.audio = el;
         el.play().catch(() => { /* autoplay policy — ignore */ });
       } catch (_) {
@@ -646,12 +683,12 @@
 
       // Initialize panzoom (panzoom is available globally from the vendored script)
       if (typeof window.panzoom === 'function') {
-        const container = document.getElementById('screenshot-container');
         STATE.panzoom = window.panzoom($panzoomLayer, {
-          bounds: true,
-          boundsPadding: 0.3,
-          maxZoom: 3.0,
-          minZoom: 0.3,
+          // Camera moves are driven programmatically — bounds clamping
+          // fights the animated transform, so it stays off.
+          bounds: false,
+          maxZoom: 6.0,
+          minZoom: 0.1,
           zoomSpeed: 0.065,
           smoothScroll: true,
           // Disable double-click zoom on the viewer (it fights with step nav)
@@ -662,14 +699,90 @@
       }
     }
 
+    // Fit state — the camera's "home" transform. zoomLevel semantics are
+    // RELATIVE to this fit (1.0 = whole page visible, 2.0 = 2x closer),
+    // so demos look identical in any container size.
+    function computeFit() {
+      const vp = (STATE.spec && STATE.spec.viewport) || { width: 1440, height: 900 };
+      const container = document.getElementById('screenshot-container');
+      const cw = container.clientWidth  || vp.width;
+      const ch = container.clientHeight || vp.height;
+      const scale = Math.min(cw / vp.width, ch / vp.height);
+      return {
+        cw, ch,
+        scale,
+        x: (cw - vp.width  * scale) / 2,
+        y: (ch - vp.height * scale) / 2,
+      };
+    }
+
     function fitViewport(vw, vh) {
       if (!STATE.panzoom) return;
-      const container = document.getElementById('screenshot-container');
-      const cw = container.clientWidth;
-      const ch = container.clientHeight;
-      const scale = Math.min(cw / vw, ch / vh);
-      STATE.panzoom.moveTo(0, 0);
-      STATE.panzoom.zoomAbs(cw / 2, ch / 2, scale);
+      const fit = computeFit();
+      STATE.fit = fit;
+      setCameraTransform(fit.scale, fit.x, fit.y);
+    }
+
+    // Set the panzoom transform exactly (scale + translation), keeping
+    // panzoom's internal model in sync so user wheel/drag still works.
+    function setCameraTransform(scale, x, y) {
+      if (!STATE.panzoom) return;
+      // zoomAbs anchored at screen (0,0) sets the scale (translation gets
+      // multiplied by the ratio); moveTo then pins the exact translation.
+      STATE.panzoom.zoomAbs(0, 0, scale);
+      STATE.panzoom.moveTo(x, y);
+    }
+
+    // Easing library for camera moves. CSS strings map onto the closest
+    // cubic; unknown strings fall back to ease-in-out.
+    const EASINGS = {
+      'linear':      function(t) { return t; },
+      'ease-in':     function(t) { return t * t * t; },
+      'ease-out':    function(t) { return 1 - Math.pow(1 - t, 3); },
+      'ease-in-out': function(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; },
+    };
+    function easingFn(name) {
+      if (name && EASINGS[name]) return EASINGS[name];
+      if (name && name.indexOf('ease-out') === 0) return EASINGS['ease-out'];
+      return EASINGS['ease-in-out'];
+    }
+
+    // Camera target for "center content point (cx, cy) at zoom `level`".
+    // level is relative to the fit scale.
+    function cameraTargetFor(cx, cy, level) {
+      const fit = STATE.fit || computeFit();
+      const scale = fit.scale * Math.max(1.0, Math.min(3.0, level || 1.0));
+      return {
+        scale,
+        x: fit.cw / 2 - cx * scale,
+        y: fit.ch / 2 - cy * scale,
+      };
+    }
+
+    // Animate the camera from its current transform to (scale, x, y).
+    function animateCameraTo(target, duration, easing) {
+      if (!STATE.panzoom) return;
+      if (STATE._cameraRaf) { cancelAnimationFrame(STATE._cameraRaf); STATE._cameraRaf = null; }
+      const from = STATE.panzoom.getTransform();
+      const f = { scale: from.scale, x: from.x, y: from.y };
+      const ease = easingFn(easing);
+      const dur = Math.max(1, duration || 500);
+      const start = performance.now();
+      function tick(now) {
+        const t = Math.min((now - start) / dur, 1);
+        const e = ease(t);
+        setCameraTransform(
+          f.scale + (target.scale - f.scale) * e,
+          f.x + (target.x - f.x) * e,
+          f.y + (target.y - f.y) * e
+        );
+        if (t < 1) {
+          STATE._cameraRaf = requestAnimationFrame(tick);
+        } else {
+          STATE._cameraRaf = null;
+        }
+      }
+      STATE._cameraRaf = requestAnimationFrame(tick);
     }
 
     // ----------------------------------------------------------------
@@ -691,12 +804,51 @@
       return (ann && ann.animationTimeline) || [];
     }
 
+    // Zoom is intrinsic to the product — when a step has no authored camera
+    // keyframes (AI timeline missing or failed), synthesize the default
+    // spotlight → zoom → hold → release sequence from the recorded click
+    // target. Smaller targets get closer zoom.
+    function defaultZoomLevel(step) {
+      const vp = (STATE.spec && STATE.spec.viewport) || { width: 1440, height: 900 };
+      const r = _exp_targetRect(step);
+      const rel = (r.width * r.height) / Math.max(1, vp.width * vp.height);
+      if (rel < 0.02) return 2.0;
+      if (rel < 0.08) return 1.7;
+      if (rel < 0.2)  return 1.5;
+      if (rel < 0.5)  return 1.3;
+      return 1.15;
+    }
+
+    function defaultStepKeyframes(stepIndex) {
+      const step = STATE.spec.steps[stepIndex];
+      if (!step) return [];
+      const t = (step.interaction && step.interaction.target) || {};
+      const h = (step.interaction && step.interaction.hotspot) || {};
+      const sel = t.selector || 'body';
+      return [
+        { stepIndex: stepIndex, action: 'spotlightOn', target: sel,
+          duration: 200, intensity: 0.65 },
+        { stepIndex: stepIndex, action: 'zoomTo', target: sel,
+          offset: { x: Number.isFinite(h.xPct) ? h.xPct : 50,
+                    y: Number.isFinite(h.yPct) ? h.yPct : 50 },
+          zoomLevel: defaultZoomLevel(step), duration: 650, easing: 'ease-in-out' },
+        { stepIndex: stepIndex, action: 'hold', duration: 2200 },
+        { stepIndex: stepIndex, action: 'spotlightOff', duration: 200 },
+      ];
+    }
+
+    // Authored keyframes win; otherwise every step gets the default camera.
+    function effectiveKeyframes(stepIndex) {
+      const kfs = getTimeline().filter(function(kf) { return kf.stepIndex === stepIndex; });
+      return kfs.length ? kfs : defaultStepKeyframes(stepIndex);
+    }
+
     function playTimeline(stepIndex) {
+      if (STATE.exportMode) return; // __demoExport owns all motion
       cancelSequence();
       STATE._sequenceCancelled = false;
 
-      const timeline = getTimeline();
-      const kfs = timeline.filter(function(kf) { return kf.stepIndex === stepIndex; });
+      const kfs = effectiveKeyframes(stepIndex);
       if (kfs.length === 0) return;
 
       let cursor = 0;
@@ -753,7 +905,8 @@
           panToAction(target, offset, easing, duration);
           break;
         }
-        case CAMERA_ACTIONS.RESET: {
+        case CAMERA_ACTIONS.RESET:
+        case CAMERA_ACTIONS.ZOOM_TO_FIT: {
           resetAction(easing, duration);
           break;
         }
@@ -816,11 +969,10 @@
     // ----------------------------------------------------------------
     //  Camera actions via panzoom
     // ----------------------------------------------------------------
-    function zoomToAction(targetSel, offset, zoomLevel, easing, duration) {
-      if (!STATE.panzoom) return;
+    // Resolve the content point a keyframe wants centred: the step's
+    // recorded target rect + the keyframe's hotspot offset (percentages).
+    function keyframeFocus(offset) {
       const step = STATE.spec.steps[STATE.index];
-      if (!step) return;
-
       const center = getTargetCenter(step);
       var cx = center.cx, cy = center.cy;
       if (offset && Number.isFinite(offset.x) && Number.isFinite(offset.y)) {
@@ -828,50 +980,36 @@
         cx = rect.x + rect.width * (offset.x / 100);
         cy = rect.y + rect.height * (offset.y / 100);
       }
+      return { cx: cx, cy: cy };
+    }
 
-      var level = zoomLevel || 1.5;
-      var dur = duration || 500;
-
-      // panzoom.smoothZoom(screenX, screenY, zoomMultiplier)
-      // Get current zoom and compute the target scale multiplier
-      var currentZoom = STATE.panzoom.getTransform().scale;
-      var targetScale = level;
-
-      // Map viewport coords (cx, cy) to screen coords
-      // We want (cx, cy) to be at center of container after zoom
-      var container = document.getElementById('screenshot-container');
-      var cw = container.clientWidth;
-      var ch = container.clientHeight;
-
-      // The point (cx, cy) in viewport space should be at screen center
-      // smoothZoom(x, y, scaleMultiplier) zooms by `scaleMultiplier` centered at screen (x,y)
-      // smoothZoomAbs(x, y, absoluteScale) - but this doesn't exist in all versions
-      // Instead: compute screenX,screenY for the point, and use smoothZoom with multiplier
-      var ratio = targetScale / Math.max(0.1, currentZoom);
-      STATE.panzoom.smoothZoom(cx, cy, ratio);
+    function zoomToAction(targetSel, offset, zoomLevel, easing, duration) {
+      if (!STATE.panzoom || !STATE.spec.steps[STATE.index]) return;
+      const focus = keyframeFocus(offset);
+      animateCameraTo(
+        cameraTargetFor(focus.cx, focus.cy, zoomLevel || 1.5),
+        duration || 500,
+        easing
+      );
     }
 
     function panToAction(targetSel, offset, easing, duration) {
-      if (!STATE.panzoom) return;
-      var step = STATE.spec.steps[STATE.index];
-      if (!step) return;
-
-      var center = getTargetCenter(step);
-      var cx = center.cx, cy = center.cy;
-      if (offset && Number.isFinite(offset.x) && Number.isFinite(offset.y)) {
-        var rect = getTargetRect(step);
-        cx = rect.x + rect.width * (offset.x / 100);
-        cy = rect.y + rect.height * (offset.y / 100);
-      }
-
-      // smooth zoom to 1.0 (no zoom) but centered on target
-      STATE.panzoom.smoothZoom(cx, cy, 1.0 / Math.max(0.1, STATE.panzoom.getTransform().scale));
+      if (!STATE.panzoom || !STATE.spec.steps[STATE.index]) return;
+      const focus = keyframeFocus(offset);
+      // Keep the current zoom level; only move the centre.
+      const fit = STATE.fit || computeFit();
+      const level = STATE.panzoom.getTransform().scale / fit.scale;
+      animateCameraTo(
+        cameraTargetFor(focus.cx, focus.cy, level),
+        duration || 500,
+        easing
+      );
     }
 
     function resetAction(easing, duration) {
       if (!STATE.panzoom || !STATE.spec) return;
-      var vp = STATE.spec.viewport || { width: 1440, height: 900 };
-      fitViewport(vp.width, vp.height);
+      const fit = STATE.fit || computeFit();
+      animateCameraTo({ scale: fit.scale, x: fit.x, y: fit.y }, duration || 500, easing);
     }
 
     // ----------------------------------------------------------------
@@ -909,12 +1047,32 @@
       return i;
     }
 
-    function goToStep(targetIndex, direction = 1) {
+    // How long a step should stay on screen during auto-play: the longest
+    // of its camera timeline, its voiceover, and a floor — never a fixed
+    // constant that truncates the animation mid-flight.
+    function stepDwellMs(stepIndex) {
+      let timelineMs = 0;
+      effectiveKeyframes(stepIndex).forEach(function(kf) {
+        timelineMs += (kf.duration || 500);
+      });
+      let voiceMs = 0;
+      const step = STATE.spec.steps[stepIndex];
+      const words = step && step.voiceoverWords;
+      if (words && words.length) {
+        const lastWord = words[words.length - 1];
+        voiceMs = (lastWord.tEndMs || 0) + 500;
+      } else if (step && step.voiceoverBase64) {
+        voiceMs = 3000; // audio present but no word timings — estimate
+      }
+      return Math.max(2800, timelineMs + 400, voiceMs + 400);
+    }
+
+    function goToStep(targetIndex, direction = 1, force = false) {
       if (STATE.phase === 'transitioning') return;
       const n = STATE.spec.steps.length;
       if (n === 0) return;
       const next = clampIndex(targetIndex);
-      if (next === STATE.index && STATE.phase !== 'idle') return;
+      if (!force && next === STATE.index && STATE.phase !== 'idle') return;
 
       STATE.phase = 'transitioning';
       STATE.direction = direction;
@@ -926,6 +1084,11 @@
       // Resolve the FROM and TO pixel positions in viewport coordinates.
       const fromXY = STATE.cursorStart || positionHotspot(prevStep) || { x: 0, y: 0 };
       const toXY   = positionHotspot(newStep);
+
+      // Ease the camera home while the screenshot crossfades — the step's
+      // own timeline then zooms back in on the new target.
+      cancelSequence();
+      resetAction('ease-in-out', TRANSITION_MS + 200);
 
       // Crossfade screenshots.
       $screenshot.classList.remove('visible');
@@ -955,6 +1118,8 @@
           STATE.phase = 'active';
           // Fire the animation timeline for this step
           playTimeline(next);
+          // Single auto-advance scheduler: paced by the step's real length.
+          if (STATE.isPlaying) scheduleAutoAdvance(stepDwellMs(next));
         }, TRANSITION_MS);
       }, TRANSITION_MS);
     }
@@ -981,15 +1146,13 @@
     function play() {
       if (!STATE.spec || STATE.spec.steps.length === 0) return;
       const last = STATE.spec.steps.length - 1;
-      if (STATE.index >= last) {
-        // Restart from beginning.
-        goToStep(0, 1);
-      }
       STATE.isPlaying = true;
       $btnPlay.innerHTML = '&#10074;&#10074;&#xFE0E;';  // pause icon
       $btnPlay.setAttribute('aria-label', 'Pause');
-      // If we already paused mid-step, schedule the next advance.
-      if (STATE.phase === 'active') scheduleAutoAdvance();
+      // Re-enter the current step (or restart from 0 at the end) so voiceover,
+      // timeline, and the auto-advance scheduler all start from one code path.
+      const startAt = STATE.index >= last ? 0 : STATE.index;
+      goToStep(startAt, 1, true);
     }
 
     function pause() {
@@ -1075,6 +1238,368 @@
     function hideControls() {
       $controls.classList.add('hidden');
     }
+
+    // ----------------------------------------------------------------
+    //  Deterministic export renderer (__demoExport)
+    //
+    //  The video exporter drives this instead of the live player: every
+    //  visual property (camera, cursor, crossfade, spotlight, hotspot
+    //  pulse, caption) is a pure function of t. seek(tMs) renders the
+    //  exact frame for time t — no timers, no wall clock, no jitter.
+    // ----------------------------------------------------------------
+    const EXPORT = {
+      compiled: null,
+    };
+
+    function _exp_hotspotPoint(step) {
+      const t = (step && step.interaction && step.interaction.target) || {};
+      const r = t.boundingRect;
+      const h = (step && step.interaction && step.interaction.hotspot) || {};
+      const xPct = Number.isFinite(h.xPct) ? h.xPct : 50;
+      const yPct = Number.isFinite(h.yPct) ? h.yPct : 50;
+      if (r && Number.isFinite(r.width) && Number.isFinite(r.height)) {
+        return { x: r.x + r.width * xPct / 100, y: r.y + r.height * yPct / 100 };
+      }
+      const vp = STATE.spec.viewport || { width: 1440, height: 900 };
+      return { x: vp.width / 2, y: vp.height / 2 };
+    }
+
+    function _exp_targetRect(step) {
+      const t = (step && step.interaction && step.interaction.target) || {};
+      const r = t.boundingRect;
+      if (r && Number.isFinite(r.width) && Number.isFinite(r.height)) return r;
+      const vp = STATE.spec.viewport || { width: 1440, height: 900 };
+      return { x: vp.width / 2 - 60, y: vp.height / 2 - 40, width: 120, height: 80 };
+    }
+
+    function _exp_camFor(step, offset, level, fit) {
+      const rect = _exp_targetRect(step);
+      const hp = _exp_hotspotPoint(step);
+      let cx = hp.x, cy = hp.y;
+      if (offset && Number.isFinite(offset.x) && Number.isFinite(offset.y)) {
+        cx = rect.x + rect.width * (offset.x / 100);
+        cy = rect.y + rect.height * (offset.y / 100);
+      }
+      const scale = fit.scale * Math.max(1.0, Math.min(3.0, level || 1.5));
+      return {
+        scale,
+        x: fit.cw / 2 - cx * scale,
+        y: fit.ch / 2 - cy * scale,
+      };
+    }
+
+    function _exp_bezier(from, to, e) {
+      const dx = to.x - from.x, dy = to.y - from.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      const off = Math.min(80, len * 0.35);
+      const px = -dy / len, py = dx / len;
+      const cp1x = from.x + dx * 0.25 + px * off;
+      const cp1y = from.y + dy * 0.25 + py * off;
+      const cp2x = from.x + dx * 0.75 + px * off;
+      const cp2y = from.y + dy * 0.75 + py * off;
+      const u = 1 - e;
+      return {
+        x: u*u*u*from.x + 3*u*u*e*cp1x + 3*u*e*e*cp2x + e*e*e*to.x,
+        y: u*u*u*from.y + 3*u*u*e*cp1y + 3*u*e*e*cp2y + e*e*e*to.y,
+      };
+    }
+
+    const _exp_ease = EASINGS['ease-in-out'];
+
+    function compileExport() {
+      const spec = STATE.spec;
+      const steps = spec.steps;
+      const timeline = getTimeline();
+      const fit = computeFit();
+
+      const TRANS = 350;       // screenshot crossfade
+      const FLY = 550;         // cursor flight duration
+      const TAIL = 1400;       // outro: zoom back out, settle
+
+      // ---- step windows --------------------------------------------
+      let t = 0;
+      const wins = steps.map((s, i) => {
+        const dwell = stepDwellMs(i) + 300;
+        const w = { index: i, tStart: t, tEnd: t + dwell };
+        t += dwell;
+        return w;
+      });
+      const totalMs = t + TAIL;
+
+      // ---- camera waypoints ----------------------------------------
+      const FITCAM = { scale: fit.scale, x: fit.x, y: fit.y };
+      const camWps = [{ t: 0, cam: FITCAM }];
+      let camPrev = FITCAM;
+      wins.forEach(w => {
+        const kfs = effectiveKeyframes(w.index);
+        const zoomKf = kfs.find(k => k.action === 'zoomTo');
+        if (!zoomKf) {
+          // Explicit timeline with no zoom for this step — drift home.
+          w.camArrive = Math.min(w.tStart + 700, w.tEnd - 100);
+          camWps.push({ t: w.tStart, cam: camPrev });
+          camWps.push({ t: w.camArrive, cam: FITCAM });
+          camPrev = FITCAM;
+          return;
+        }
+        const cam = _exp_camFor(steps[w.index], zoomKf.offset, zoomKf.zoomLevel, fit);
+        const zoomDur = Math.max(400, Math.min(1200, zoomKf.duration || 600));
+        // Voice-sync: land the camera when the narrator hits the key word.
+        let arrive;
+        if (Number.isFinite(zoomKf.tStartMs) && zoomKf.tStartMs > 0) {
+          arrive = w.tStart + TRANS + zoomKf.tStartMs;
+        } else {
+          arrive = w.tStart + Math.max(TRANS, FLY - 100) + zoomDur;
+        }
+        arrive = Math.max(w.tStart + 500, Math.min(arrive, w.tEnd - 900));
+        const depart = Math.max(w.tStart, arrive - zoomDur);
+        w.camArrive = arrive;
+        camWps.push({ t: depart, cam: camPrev });
+        camWps.push({ t: arrive, cam });
+        camPrev = cam;
+      });
+      camWps.push({ t: totalMs - TAIL + 100, cam: camPrev });
+      camWps.push({ t: totalMs - 300, cam: FITCAM });
+
+      // ---- cursor flights + click/page-transition beats ------------
+      // The stagecraft: camera lands on the target, the cursor arrives,
+      // the click pulses, and only THEN does the page change (each step's
+      // pre-click stage is the previous step's screenshot).
+      const flights = [];
+      let prevPt = _exp_hotspotPoint(steps[0]);
+      wins.forEach(w => {
+        const pt = _exp_hotspotPoint(steps[w.index]);
+        const arrive = w.camArrive || (w.tStart + 900);
+        const clickAt = Math.min(arrive + 120, w.tEnd - 700);
+        w.clickAt = clickAt;
+        w.fadeStart = Math.min(clickAt + 250, w.tEnd - 400);
+        if (w.index === 0) {
+          flights.push({ t0: 0, t1: 1, from: pt, to: pt, click: clickAt });
+        } else {
+          const t1 = Math.max(w.tStart + 300, arrive - 120);
+          const t0 = Math.max(w.tStart + 100, t1 - FLY);
+          flights.push({ t0, t1, from: prevPt, to: pt, click: clickAt });
+        }
+        prevPt = pt;
+      });
+
+      // ---- spotlight windows ---------------------------------------
+      const spots = [];
+      wins.forEach(w => {
+        const kfs = effectiveKeyframes(w.index);
+        const on = kfs.find(k => k.action === 'spotlightOn');
+        if (!on) return;
+        const rect = _exp_targetRect(steps[w.index]);
+        const pad = 12;
+        spots.push({
+          t0: w.tStart + TRANS + 200,
+          // Release the spotlight when the page transitions — its hole
+          // rect belongs to the pre-click stage, not the result page.
+          t1: Math.min(w.tEnd - 250, (w.fadeStart != null ? w.fadeStart : w.tEnd)),
+          fade: 250,
+          alpha: (on.intensity != null ? on.intensity : 0.7),
+          rect: {
+            x: Math.max(0, rect.x - pad),
+            y: Math.max(0, rect.y - pad),
+            w: rect.width + 2 * pad,
+            h: rect.height + 2 * pad,
+          },
+        });
+      });
+
+      // ---- audio placement (consumed by the Python exporter) -------
+      const audioPlan = [];
+      wins.forEach(w => {
+        const s = steps[w.index];
+        if (s && s.voiceoverBase64) {
+          audioPlan.push({ stepIndex: w.index, atMs: Math.round(w.tStart + TRANS) });
+        }
+      });
+
+      EXPORT.compiled = {
+        fit, wins, camWps, flights, spots, totalMs,
+        TRANS, FLY, TAIL, audioPlan,
+      };
+      return EXPORT.compiled;
+    }
+
+    function _exp_evalCam(tMs) {
+      const wps = EXPORT.compiled.camWps;
+      if (tMs <= wps[0].t) return wps[0].cam;
+      for (let k = 0; k < wps.length - 1; k++) {
+        const a = wps[k], b = wps[k + 1];
+        if (tMs >= b.t) continue;
+        if (b.t <= a.t) return b.cam;
+        const e = _exp_ease((tMs - a.t) / (b.t - a.t));
+        return {
+          scale: a.cam.scale + (b.cam.scale - a.cam.scale) * e,
+          x: a.cam.x + (b.cam.x - a.cam.x) * e,
+          y: a.cam.y + (b.cam.y - a.cam.y) * e,
+        };
+      }
+      return wps[wps.length - 1].cam;
+    }
+
+    function _exp_evalCursor(tMs) {
+      const flights = EXPORT.compiled.flights;
+      let cur = flights[0] ? flights[0].from : { x: 0, y: 0 };
+      let clickAt = null;
+      for (const f of flights) {
+        if (tMs < f.t0) break;
+        if (tMs <= f.t1) {
+          const e = _exp_ease((tMs - f.t0) / Math.max(1, f.t1 - f.t0));
+          cur = _exp_bezier(f.from, f.to, e);
+        } else {
+          cur = f.to;
+        }
+        if (tMs >= f.click) clickAt = f.click;
+      }
+      return { pos: cur, lastClick: clickAt };
+    }
+
+    async function exportPrepare() {
+      if (!STATE.spec) throw new Error('no spec loaded');
+      STATE.exportMode = true;
+      document.body.classList.add('export-mode');
+      // Silence the live player completely.
+      cancelSequence();
+      clearTimeout(STATE.autoPlayTimeout);
+      STATE.isPlaying = false;
+      stopVoiceover();
+      if (STATE._cameraRaf) { cancelAnimationFrame(STATE._cameraRaf); STATE._cameraRaf = null; }
+      if (STATE.panzoom) STATE.panzoom.pause();
+
+      // Pre-decode every screenshot so seek() never catches a half-loaded img.
+      const srcs = STATE.spec.steps.map(s => resolveScreenshot(s));
+      await Promise.all(srcs.map(src => new Promise(res => {
+        const im = new Image();
+        im.onload = () => res(); im.onerror = () => res();
+        im.src = src;
+      })));
+
+      const plan = compileExport();
+      EXPORT.srcs = srcs;
+      $screenshot.style.transition = 'none';
+      $screenshot.classList.add('visible');
+      const $prev = document.getElementById('screenshot-prev');
+      $prev.style.zIndex = '2';
+      return {
+        totalMs: plan.totalMs,
+        audioPlan: plan.audioPlan,
+        stepWindows: plan.wins,
+      };
+    }
+
+    function exportSeek(tMs) {
+      const c = EXPORT.compiled;
+      if (!c) throw new Error('call prepare() first');
+      const steps = STATE.spec.steps;
+      const $prev = document.getElementById('screenshot-prev');
+      const $caption = document.getElementById('export-caption');
+
+      // ---- active step: stage (pre-click) → result crossfade --------
+      // Step i plays out on the PREVIOUS step's screenshot (its pre-click
+      // state); its own screenshot — the click result — fades in only
+      // after the click pulse.
+      let win = c.wins[0];
+      for (const w of c.wins) { if (tMs >= w.tStart) win = w; else break; }
+      const i = win.index;
+      const stageIdx = Math.max(0, i - 1);
+      if (EXPORT._shownIndex !== i) {
+        $screenshot.src = EXPORT.srcs[i];
+        EXPORT._shownIndex = i;
+      }
+      $screenshot.style.opacity = '1';
+      const fadeStart = win.fadeStart != null ? win.fadeStart : win.tStart;
+      const fadeP = (tMs - fadeStart) / c.TRANS;
+      if (stageIdx !== i && fadeP < 1) {
+        if (EXPORT._prevIndex !== stageIdx) {
+          $prev.src = EXPORT.srcs[stageIdx];
+          EXPORT._prevIndex = stageIdx;
+        }
+        $prev.style.opacity = String(Math.min(1, Math.max(0, 1 - fadeP)));
+      } else {
+        $prev.style.opacity = '0';
+      }
+
+      // ---- camera ---------------------------------------------------
+      const cam = _exp_evalCam(tMs);
+      $panzoomLayer.style.transformOrigin = '0 0';
+      $panzoomLayer.style.transform =
+        'matrix(' + cam.scale + ', 0, 0, ' + cam.scale + ', ' + cam.x + ', ' + cam.y + ')';
+
+      // ---- cursor + hotspot ------------------------------------------
+      const cur = _exp_evalCursor(tMs);
+      $cursor.style.left = cur.pos.x + 'px';
+      $cursor.style.top  = cur.pos.y + 'px';
+      $cursor.classList.add('visible');
+      $cursor.style.opacity = '1';
+
+      const hp = _exp_hotspotPoint(steps[i]);
+      $hotspot.setAttribute('cx', hp.x);
+      $hotspot.setAttribute('cy', hp.y);
+      $hotspotRing.setAttribute('cx', hp.x);
+      $hotspotRing.setAttribute('cy', hp.y);
+      // Deterministic pulse: gentle breathing dot, expanding ring on click.
+      // The dot marks the click target on the pre-click stage — once the
+      // result page fades in, it no longer points at anything.
+      const pulse = 1 + 0.14 * Math.sin(2 * Math.PI * ((tMs % 1400) / 1400));
+      $hotspot.style.transform = 'scale(' + pulse + ')';
+      $hotspot.style.opacity = tMs < fadeStart + c.TRANS ? '0.85' : '0';
+      if (cur.lastClick != null && tMs - cur.lastClick < 650) {
+        const rp = (tMs - cur.lastClick) / 650;
+        $hotspotRing.style.transform = 'scale(' + (0.6 + rp * 1.8) + ')';
+        $hotspotRing.style.opacity = String(Math.max(0, 1 - rp));
+      } else {
+        $hotspotRing.style.opacity = '0';
+      }
+
+      // ---- spotlight --------------------------------------------------
+      let spotAlpha = 0, spotRect = null;
+      for (const s of c.spots) {
+        if (tMs < s.t0 || tMs > s.t1 + s.fade) continue;
+        let ramp = 1;
+        if (tMs < s.t0 + s.fade) ramp = (tMs - s.t0) / s.fade;
+        else if (tMs > s.t1) ramp = 1 - (tMs - s.t1) / s.fade;
+        spotAlpha = s.alpha * Math.max(0, Math.min(1, ramp));
+        spotRect = s.rect;
+        break;
+      }
+      if (spotRect && spotAlpha > 0.01) {
+        const vp = STATE.spec.viewport || { width: 1440, height: 900 };
+        const r = spotRect;
+        $spotlight.style.background = 'rgba(0, 0, 0, ' + spotAlpha.toFixed(3) + ')';
+        $spotlight.style.clipPath = 'path(evenodd, ' +
+          "'M0,0 L" + vp.width + ",0 L" + vp.width + "," + vp.height + " L0," + vp.height + " Z " +
+          "M" + r.x + "," + r.y + " L" + (r.x + r.w) + "," + r.y + " L" + (r.x + r.w) + "," + (r.y + r.h) +
+          " L" + r.x + "," + (r.y + r.h) + " Z')";
+        $spotlight.style.opacity = '1';
+        $spotlight.classList.add('active');
+      } else {
+        $spotlight.style.opacity = '0';
+        $spotlight.classList.remove('active');
+      }
+
+      // ---- caption ----------------------------------------------------
+      const ann = steps[i] && steps[i].annotation;
+      if (ann) {
+        const a0 = win.tStart + c.TRANS, a1 = win.tEnd - 200, af = 250;
+        let cAlpha = 0;
+        if (tMs >= a0 && tMs <= a1) {
+          cAlpha = Math.min(1, (tMs - a0) / af, Math.max(0, (a1 - tMs) / af));
+        }
+        $caption.textContent = ann;
+        $caption.style.opacity = String(Math.max(0, Math.min(1, cAlpha)));
+      } else {
+        $caption.style.opacity = '0';
+      }
+      return true;
+    }
+
+    window.__demoExport = {
+      prepare: exportPrepare,
+      seek: exportSeek,
+      plan: function() { return EXPORT.compiled; },
+    };
 
     // ----------------------------------------------------------------
     //  Wiring
@@ -1172,11 +1697,19 @@
         const first = spec.steps[0];
         const xy = positionHotspot(first);
         STATE.cursorStart = xy;
+        // Cursor rests on the first hotspot from the start.
+        $cursor.style.left = xy.x + 'px';
+        $cursor.style.top  = xy.y + 'px';
+        $cursor.classList.add('visible');
         $screenshot.addEventListener('load', () => $screenshot.classList.add('visible'), { once: true });
         $screenshot.src = resolveScreenshot(first);
         // Reveal even if cached.
         setTimeout(() => $screenshot.classList.add('visible'), 60);
         updateInfo(first);
+
+        // The initial step is fully rendered — mark it active so play()
+        // and manual navigation work from a fresh load.
+        STATE.phase = 'active';
 
         // Play timeline for step 0 on initial load
         playTimeline(0);

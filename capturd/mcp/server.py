@@ -94,14 +94,20 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
 
     # ---- demo.record ------------------------------------------------------
 
+    # sessionId → {"recorder", "thread", "mode"} for demo.stop.
+    _live_sessions: dict[str, dict[str, Any]] = {}
+
     @mcp.tool(
         name="demo.record",
         description=(
-            "Start recording a product demo. Opens a headful Playwright "
-            "window — click through your flow, then call demo.stop with "
-            "the returned sessionId. The browser stays open until stop is "
-            "called, so the caller MUST be able to interact with the host "
-            "graphical session."
+            "Start recording a product demo. mode='agent' (the headless "
+            "'prompt in, demo out' flow): an LLM drives the browser toward "
+            "`goal`, clicking through the product on its own; the session "
+            "finishes by itself — poll demo.stop with the returned sessionId "
+            "to persist + enrich. Requires an OpenAI-compatible gateway "
+            "(RHOBEAR_GW_API_KEY / RHOBEAR_GW_BASE_URL env on the host). "
+            "mode='human' opens a headful browser window on the host for a "
+            "person to click through, then call demo.stop."
         ),
         timeout=60.0,
     )
@@ -109,6 +115,7 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         url: str,
         name: str,
         goal: str = "",
+        mode: str = "agent",
         viewport: dict[str, int] | None = None,
         workflow: bool = False,
         voice: bool = False,
@@ -117,12 +124,17 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError("url is required")
         if not name:
             raise ValueError("name is required")
+        if mode not in ("agent", "human"):
+            raise ValueError(f"mode must be 'agent' or 'human', got {mode!r}")
+        if mode == "agent" and not goal:
+            raise ValueError("agent mode needs a goal — tell the agent what flow to demonstrate")
         try:
-            recorder, session_id = forge.start_recording(
+            recorder, session_id, mode = forge.start_recording(
                 {
                     "url": url,
                     "name": name,
                     "goal": goal,
+                    "mode": mode,
                     "viewport": viewport or {"width": 1440, "height": 900},
                     "workflow": workflow,
                     "voice": voice or workflow,
@@ -131,27 +143,64 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
-        # The recorder owns its own event loop, so we kick off start() in a
-        # background thread and let demo.stop handle teardown. This mirrors
-        # what app.py does for the HTTP /api/demos/record route.
-        def _spawn() -> None:
-            try:
-                from capturd.walk.recorder import run_async
-                run_async(recorder.start())
-            except Exception:  # pragma: no cover - surfaces via demo.stop
-                logger.exception("recorder thread crashed for %s", session_id)
+        if mode == "agent":
+            # Agent mode drives itself to completion in its own loop; the
+            # thread wrapper marks the recorder finished either way so
+            # demo.stop never hangs on a crashed run.
+            def _spawn_agent() -> None:
+                try:
+                    asyncio.run(recorder.agent_record())
+                except Exception:
+                    logger.exception("agent recorder crashed for %s", session_id)
+                finally:
+                    recorder.finished.set()
 
-        thread = threading.Thread(
-            target=_spawn,
-            name=f"demo-recorder-{session_id}",
-            daemon=True,
-        )
+            thread = threading.Thread(
+                target=_spawn_agent,
+                name=f"demo-agent-{session_id}",
+                daemon=True,
+            )
+        else:
+            # Human mode: the recorder needs a live event loop for the whole
+            # session. Park the loop with run_forever(); recorder.stop()
+            # (called by demo.stop) schedules teardown onto it and then
+            # stops it — never close the loop out from under the browser.
+            def _spawn_human() -> None:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(recorder.start())
+                    loop.run_forever()
+                except Exception:
+                    logger.exception("recorder thread crashed for %s", session_id)
+                finally:
+                    recorder.finished.set()
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+
+            thread = threading.Thread(
+                target=_spawn_human,
+                name=f"demo-recorder-{session_id}",
+                daemon=True,
+            )
         thread.start()
+        _live_sessions[session_id] = {
+            "recorder": recorder,
+            "thread": thread,
+            "mode": mode,
+        }
         return {
             "sessionId": session_id,
+            "mode": mode,
             "message": (
-                "Recording started. Interact with the browser window, then "
-                "call demo.stop with this sessionId."
+                "Agent recording started — it will click through the flow on "
+                "its own. Call demo.stop with this sessionId to wait for it "
+                "to finish and start AI enrichment."
+                if mode == "agent"
+                else "Recording started. Interact with the browser window, "
+                     "then call demo.stop with this sessionId."
             ),
         }
 
@@ -161,34 +210,73 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         name="demo.stop",
         description=(
             "Stop a recording session, persist the DemoSpec to disk, and "
-            "kick off the AI enrichment pipeline. Returns the demoId and "
-            "the initial pipeline status. Idempotent — calling demo.stop "
-            "twice on the same sessionId returns the current status "
-            "without restarting enrichment."
+            "kick off the AI enrichment pipeline. For agent-mode sessions "
+            "this waits for the agent to finish its click-through first. "
+            "Returns the demoId and the initial pipeline status. Idempotent "
+            "— calling demo.stop twice on the same sessionId returns the "
+            "current status without restarting enrichment."
         ),
-        timeout=120.0,
+        timeout=360.0,
     )
     async def demo_stop(session_id: str) -> dict[str, Any]:
         if not session_id:
             raise ValueError("sessionId is required")
-        try:
-            recorder = forge.get_recorder(session_id)
-        except DemoRecorderError:
-            raise ValueError(f"unknown recording session: {session_id}")
 
-        # Persist the spec — run_async because recorder.stop() bridges
-        # threads to the recorder's own loop.
-        try:
-            from capturd.walk.recorder import run_async
-            spec = recorder.stop()
-        except DemoRecorderError as exc:
-            raise ValueError(str(exc)) from exc
-        except Exception as exc:  # pragma: no cover - defensive
-            forge.discard_recorder(session_id)
-            raise RuntimeError(f"failed to stop recorder: {exc}") from exc
+        live = _live_sessions.get(session_id)
+        if live is None:
+            # Idempotent path: session already stopped and discarded — if the
+            # demo made it to disk, report its current status instead of
+            # erroring on the retry.
+            try:
+                status = forge.get_status(session_id)
+            except (DemoNotFound, DemoForgeError):
+                raise ValueError(f"unknown recording session: {session_id}")
+            return status
+
+        recorder = live["recorder"]
+        mode = live["mode"]
+
+        if mode == "agent":
+            # The agent session drives itself to completion and writes
+            # demo.json on its own — demo.stop just waits for it (off the
+            # event loop so other MCP calls stay responsive). Never signal
+            # _stopped here: that would abort the click-through mid-flow.
+            def _await_agent() -> None:
+                live["thread"].join(timeout=300.0)
+
+            await asyncio.to_thread(_await_agent)
+            if live["thread"].is_alive():
+                raise RuntimeError(
+                    "agent recording did not finish within 300s — "
+                    "poll demo.stop again"
+                )
+            spec = recorder.get_spec()
+        else:
+            # Human mode: bridge into the recorder's parked loop.
+            try:
+                spec = await asyncio.to_thread(recorder.stop)
+            except DemoRecorderError as exc:
+                raise ValueError(str(exc)) from exc
+            except Exception as exc:  # pragma: no cover - defensive
+                forge.discard_recorder(session_id)
+                _live_sessions.pop(session_id, None)
+                raise RuntimeError(f"failed to stop recorder: {exc}") from exc
 
         step_count = len(spec.steps)
         forge.discard_recorder(session_id)
+        _live_sessions.pop(session_id, None)
+
+        if step_count == 0:
+            return {
+                "demoId": spec.id,
+                "stepCount": 0,
+                "status": "failed",
+                "error": (
+                    "recording captured zero steps — for agent mode check "
+                    "that the gateway env (RHOBEAR_GW_API_KEY) is set on the "
+                    "MCP host and see the server log for the agent trace"
+                ),
+            }
 
         # Kick off enrichment (returns immediately; runs in a daemon thread).
         try:
@@ -316,18 +404,26 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
     @mcp.tool(
         name="demo.export",
         description=(
-            "Export a demo as a self-contained HTML viewer. Screenshots "
-            "are inlined as base64 so the resulting export.html has no "
-            "external dependencies — open it from file:// or serve it "
-            "from anywhere. Currently only the 'html' format is supported."
+            "Export a demo. format='html' renders a self-contained "
+            "interactive viewer (screenshots inlined as base64 — open from "
+            "file:// anywhere). format='mp4' renders the full Supademo-style "
+            "walkthrough VIDEO — smooth zoom/pan camera, flying cursor, "
+            "spotlight, captions, voiceover audio track — via the "
+            "deterministic frame renderer + ffmpeg. format='gif' is the "
+            "same video as an animated GIF. Video rendering takes roughly "
+            "2-4x the demo duration; the call blocks until the file is "
+            "written and returns its absolute path."
         ),
-        timeout=30.0,
+        timeout=900.0,
     )
     async def demo_export(demo_id: str, format: str = "html") -> dict[str, Any]:
         if not demo_id:
             raise ValueError("demoId is required")
+        fmt = (format or "html").lower()
+        if fmt not in {"html", "mp4", "gif"}:
+            raise ValueError(f"format must be one of html, mp4, gif — got {format!r}")
         try:
-            out_path = await asyncio.to_thread(forge.export_demo, demo_id, fmt=format)
+            out_path = await asyncio.to_thread(forge.export_demo, demo_id, fmt=fmt)
         except DemoNotFound:
             raise ValueError(f"demo not found: {demo_id}")
         except DemoForgeError as exc:
@@ -335,7 +431,7 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         return {
             "path": str(out_path.resolve()),
             "demoId": demo_id,
-            "format": format,
+            "format": fmt,
         }
 
     # ---- W4: demo.zoom ---------------------------------------------------

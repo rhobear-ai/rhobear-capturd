@@ -449,14 +449,32 @@ class DemoAI:
             ann["animationTimeline"] = []
             return spec
 
-        client = _build_client()
+        # LLM stages are an upgrade, not a dependency: with no gateway
+        # configured the pipeline still produces a complete walkthrough
+        # (deterministic camera timeline, selector-derived annotations,
+        # Edge-TTS voiceover — none of which need a key).
+        client = None
+        try:
+            client = _build_client()
+        except DemoAIError as exc:
+            logger.warning(
+                "LLM gateway unavailable (%s) — running offline enrichment: "
+                "deterministic camera timeline, fallback annotations, "
+                "Edge-TTS voiceover.", exc,
+            )
         proj = Path(project_root) if project_root else Path.cwd()
 
         t_total = time.perf_counter()
 
-        # Stage 1 — vision annotations
+        # Stage 1 — vision annotations (offline: selector-derived text)
         t1 = time.perf_counter()
-        await self._annotate_steps(client, spec, proj)
+        if client is not None:
+            await self._annotate_steps(client, spec, proj)
+        for step in steps:
+            if not step.get("annotation"):
+                fallback = _fallback_annotation(step)
+                if fallback:
+                    step["annotation"] = fallback
         self._report(progress, "annotate_steps", time.perf_counter() - t1, len(steps))
 
         # Stage 4 — cursor paths (deterministic; can run before/after the LLMs)
@@ -466,17 +484,26 @@ class DemoAI:
 
         # Stage 2 — flow summary
         t2 = time.perf_counter()
-        await self._generate_summary(client, spec)
+        if client is not None:
+            await self._generate_summary(client, spec)
+        if not _ai_annotations(spec).get("summary"):
+            _ai_annotations(spec)["summary"] = (
+                f"Walkthrough of {spec.get('name') or 'the product'} "
+                f"({len(steps)} steps, starting at {spec.get('startUrl', '')})."
+            )
         self._report(progress, "summary", time.perf_counter() - t2, 1)
 
-        # Stage 3 — voiceover
+        # Stage 3 — voiceover (Edge TTS — works with no API key)
         t3 = time.perf_counter()
         await self._synthesize_voiceover(spec)
         self._report(progress, "voiceover", time.perf_counter() - t3, len(steps))
 
-        # Stage 5 — animation timeline
+        # Stage 5 — animation timeline (offline: deterministic camera)
         t5 = time.perf_counter()
-        await self._generate_animation_timeline(client, spec)
+        if client is not None:
+            await self._generate_animation_timeline(client, spec)
+        else:
+            _ai_annotations(spec)["animationTimeline"] = _deterministic_timeline(spec)
         self._report(progress, "animation_timeline", time.perf_counter() - t5, len(steps))
 
         _ai_annotations(spec)["generatedAt"] = _utc_now_iso()

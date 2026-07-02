@@ -289,9 +289,10 @@ async def test_reply_produces_audio_bytes(tmp_path: Path) -> None:
     # We'll call reply() which uses _synthesize_one, but we also save the raw MP3.
     from capturd.walk.ai_pipeline import _synthesize_one
 
-    mp3_bytes = await _synthesize_one("testing one two three")
+    mp3_bytes, word_timestamps = await _synthesize_one("testing one two three")
     assert mp3_bytes, "edge-tts returned empty audio"
     assert len(mp3_bytes) > 500, f"audio too short: {len(mp3_bytes)} bytes"
+    assert word_timestamps, "edge-tts returned no word timestamps"
 
     # Save for owner review.
     mp3_path = tmp_path / "tts_reply_test.mp3"

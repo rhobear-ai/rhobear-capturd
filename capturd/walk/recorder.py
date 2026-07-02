@@ -486,6 +486,9 @@ class DemoRecorder:
         # threading.Event so we can signal stop from any thread (the API path
         # calls stop() from uvicorn's worker thread, not the recorder's loop).
         self._stopped = threading.Event()
+        # Set by the owning thread when the session has fully torn down —
+        # agent mode finishes on its own; demo.stop waits on this.
+        self.finished = threading.Event()
         self._last_url: str | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         # Voice — enabled when payload["voice"] is True.
@@ -548,6 +551,9 @@ class DemoRecorder:
         max_steps = 30
         for turn in range(max_steps):
             assert self._page is not None
+            if self._stopped.is_set():
+                logger.info("agent recording stopped externally at turn %d", turn)
+                break
 
             # ---- 1. Screenshot + DOM ----------------------------------------
             try:
@@ -723,8 +729,15 @@ class DemoRecorder:
 
         elif action == "input":
             await self._page.wait_for_selector(selector, state="visible", timeout=3000)
+            # Click to focus first — the overlay bridge records the click, so
+            # typing into a field shows up as a real step (hotspot on the
+            # field) instead of silently mutating the page.
+            try:
+                await self._page.click(selector, timeout=5000)
+            except Exception:
+                pass  # field may be focus-only; fill still works
             await self._page.fill(selector, value or "", timeout=5000)
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.3)
 
         elif action == "navigate":
             if value and (value.startswith("http://") or value.startswith("https://")):
@@ -959,11 +972,27 @@ class DemoRecorder:
             is_voice = payload_type == "voice"
 
             # Screenshot AFTER the event so we capture the post-event state.
+            # The RECORDING badge is UI for the person driving, not part of
+            # the product being demoed — hide it around the capture.
+            try:
+                await self._page.evaluate(
+                    "() => { const b = document.getElementById('__demo-recorder-indicator');"
+                    " if (b) b.style.visibility = 'hidden'; }"
+                )
+            except Exception:
+                pass
             try:
                 png_bytes = await self._page.screenshot(full_page=False, type="png")
             except Exception as exc:
                 logger.warning("screenshot failed on step %d: %s", step_index, exc)
                 png_bytes = b""
+            try:
+                await self._page.evaluate(
+                    "() => { const b = document.getElementById('__demo-recorder-indicator');"
+                    " if (b) b.style.visibility = 'visible'; }"
+                )
+            except Exception:
+                pass
 
             shot_filename = f"step_{step_index:03d}.png"
             shot_path = self.output_dir / shot_filename
