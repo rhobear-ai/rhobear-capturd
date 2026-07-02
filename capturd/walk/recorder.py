@@ -541,7 +541,7 @@ class DemoRecorder:
 
         # ---- Agent loop -----------------------------------------------------
         client = _build_client()
-        model = "rhobear-gw/gemini-3.5-flash"
+        model = "gemini-2.5-flash"
         step_history: list[dict[str, Any]] = []
         previous_dom_hash: int | None = None
 

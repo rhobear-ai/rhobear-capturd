@@ -13,3 +13,4 @@ captures/
 msix-staging/
 packaging/ffmpeg/
 packaging/capturd.ico
+out/

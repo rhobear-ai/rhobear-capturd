@@ -58,4 +58,5 @@ packages = ["capturd", "capturd.shots", "capturd.walk", "capturd.mcp"]
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (browser-dependent, skipped by default)",
+    "e2e: marks end-to-end proof tests (network + browser + AI pipeline — deselected by default)",
 ]
