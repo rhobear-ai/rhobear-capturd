@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import json
@@ -28,29 +29,52 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# CLI
+# CLI (only parsed when run as __main__)
 # ---------------------------------------------------------------------------
-import argparse
 
-parser = argparse.ArgumentParser(description="W8 E2E walkthrough proof")
-parser.add_argument(
-    "--target",
-    default="https://example.com",
-    help="Target URL or 'canvas' for the canvas fixture",
-)
-parser.add_argument("--steps", type=int, default=4, help="Minimum steps to record")
-parser.add_argument(
-    "--skip-mp4", action="store_true", help="Skip MP4 screencast (faster debug)"
-)
-parser.add_argument(
-    "--output-dir",
-    default=None,
-    help="Override output dir (default: out/e2e-proof/<timestamp>/)",
-)
-parser.add_argument(
-    "--headless", action="store_true", default=True, help="Run browser headless"
-)
-args = parser.parse_args()
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="W8 E2E walkthrough proof")
+    p.add_argument(
+        "--target",
+        default="https://example.com",
+        help="Target URL or 'canvas' for the canvas fixture",
+    )
+    p.add_argument("--steps", type=int, default=4, help="Minimum steps to record")
+    p.add_argument(
+        "--skip-mp4", action="store_true", help="Skip MP4 screencast (faster debug)"
+    )
+    p.add_argument(
+        "--output-dir",
+        default=None,
+        help="Override output dir (default: out/e2e-proof/<timestamp>/)",
+    )
+    p.add_argument(
+        "--headless", action="store_true", default=True, help="Run browser headless"
+    )
+    return p
+
+
+# Module-level defaults (overridden by CLI when run as __main__)
+_ARGS = None
+
+
+def _get_args():
+    global _ARGS
+    if _ARGS is None:
+        _ARGS = _build_parser().parse_args([])  # safe defaults for import
+    return _ARGS
+
+
+def _set_args(**kwargs):
+    """Override args for test invocation."""
+    global _ARGS
+    from types import SimpleNamespace
+    defaults = vars(_build_parser().parse_args([]))
+    defaults.update(kwargs)
+    _ARGS = SimpleNamespace(**defaults)
+
+
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -108,8 +132,8 @@ def _timestamp() -> str:
 
 
 def _out_dir() -> Path:
-    if args.output_dir:
-        d = Path(args.output_dir)
+    if _get_args().output_dir:
+        d = Path(_get_args().output_dir)
     else:
         d = PROJECT_ROOT / "out" / "e2e-proof" / _timestamp()
     d.mkdir(parents=True, exist_ok=True)
@@ -163,7 +187,7 @@ async def run_pipeline(target_url: str, out_dir: Path, label: str) -> dict[str, 
     if len(spec.steps) < 2:
         logger.warning(
             "Only %d steps recorded (target was %d). Pipeline may be sparse.",
-            len(spec.steps), args.steps,
+            len(spec.steps), _get_args().steps,
         )
 
     # ---- 2. AI Pipeline -------------------------------------------------------
@@ -258,7 +282,7 @@ async def run_pipeline(target_url: str, out_dir: Path, label: str) -> dict[str, 
 
     # ---- 5. MP4 screencast ---------------------------------------------------
     mp4_path = None
-    if not args.skip_mp4:
+    if not _get_args().skip_mp4:
         logger.info("=== STAGE 5: MP4 screencast ===")
         mp4_path = out_dir / "walkthrough.mp4"
         try:
@@ -571,7 +595,7 @@ async def main() -> int:
     }
 
     # Resolve target
-    target = args.target
+    target = _get_args().target
     if target == "canvas":
         target_url = f"file://{CANVAS_FIXTURE.absolute()}"
         label = "canvas-fixture"
@@ -650,4 +674,5 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    _ARGS = _build_parser().parse_args()
     sys.exit(asyncio.run(main()))

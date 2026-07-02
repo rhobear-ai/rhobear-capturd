@@ -25,17 +25,16 @@ def e2e_results(tmp_path_factory) -> dict[str, Any]:
     """Run the E2E proof script in a temp dir and return results."""
     out_dir = tmp_path_factory.mktemp("e2e-proof")
 
-    from e2e_walkthrough_proof import args
+    from e2e_walkthrough_proof import _set_args, main as e2e_main
 
     # Override args for test run
-    args.target = "https://example.com"
-    args.steps = 3
-    args.skip_mp4 = True  # MP4 too slow for CI; save as separate run
-    args.output_dir = str(out_dir)
-    args.headless = True
-
-    # Import and run
-    from e2e_walkthrough_proof import main as e2e_main
+    _set_args(
+        target="https://example.com",
+        steps=3,
+        skip_mp4=True,  # MP4 too slow for CI; save as separate run
+        output_dir=str(out_dir),
+        headless=True,
+    )
 
     exit_code = asyncio.run(e2e_main())
     assert exit_code == 0, f"E2E script failed with exit code {exit_code}"
