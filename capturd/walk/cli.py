@@ -30,6 +30,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--goal", required=True, help="What the flow demonstrates")
     p.add_argument("--agent", action="store_true",
                    help="Agent-driven (LLM picks each next click). Default: headful, human clicks.")
+    p.add_argument("--visible", dest="visible", action="store_true", default=None,
+                   help="Force the browser window on-screen (agent mode is hidden by default).")
+    p.add_argument("--headless", dest="visible", action="store_false",
+                   help="Force the browser hidden (headless), even in human mode.")
     p.add_argument("--voice", action="store_true",
                    help="Enable push-to-talk voice input (mic button on overlay).")
     p.add_argument("--workflow", action="store_true",
@@ -206,6 +210,8 @@ def _cmd_record(args: argparse.Namespace) -> int:
         "voice": args.voice or args.workflow,
         "workflow": args.workflow,
     }
+    if args.visible is not None:
+        payload["visible"] = args.visible
 
     mgr = DemoManager()
 

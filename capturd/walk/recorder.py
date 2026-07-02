@@ -456,6 +456,7 @@ class DemoRecorder:
         viewport: dict[str, int] | None = None,
         output_dir: Path | None = None,
         workflow_mode: bool = False,
+        headful: bool = False,
     ) -> None:
         self.session_id = session_id
         self.url = url
@@ -466,6 +467,11 @@ class DemoRecorder:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.workflow_mode = workflow_mode
+        # When True the browser is launched VISIBLE (headful) — this is what
+        # makes the capture "pop up on screen and work in the side window"
+        # for live marketing/demo runs. Agent mode defaults headless; the
+        # caller opts into visible via payload["visible"].
+        self.headful = headful
 
         self.spec = DemoSpec(
             id=session_id,
@@ -522,7 +528,7 @@ class DemoRecorder:
 
         self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
-        self._browser = await _launch_demo_browser(self._playwright, headless=True)
+        self._browser = await _launch_demo_browser(self._playwright, headless=not self.headful)
         self._context = await self._browser.new_context(
             viewport={"width": self.viewport["width"], "height": self.viewport["height"]},
             device_scale_factor=1,
@@ -537,7 +543,10 @@ class DemoRecorder:
         self._capture_task = asyncio.create_task(
             self._capture_loop(), name=f"demo-cap-{self.session_id}"
         )
-        logger.info("agent recorder launched: session=%s url=%s", self.session_id, self.url)
+        logger.info(
+            "agent recorder launched: session=%s url=%s headful=%s",
+            self.session_id, self.url, self.headful,
+        )
 
         # Wait a tick so the overlay installs and first paints settle.
         await asyncio.sleep(0.3)
@@ -745,6 +754,23 @@ class DemoRecorder:
                 self._last_url = self._page.url
                 await asyncio.sleep(0.5)
 
+        elif action == "scroll":
+            # value: "down"/"up"/"top"/"bottom" or a pixel delta ("600").
+            v = (value or "down").strip().lower()
+            if v == "top":
+                await self._page.evaluate("() => window.scrollTo({top: 0})")
+            elif v == "bottom":
+                await self._page.evaluate(
+                    "() => window.scrollTo({top: document.body.scrollHeight})"
+                )
+            else:
+                try:
+                    dy = int(v)
+                except ValueError:
+                    dy = -500 if v == "up" else 500
+                await self._page.mouse.wheel(0, dy)
+            await asyncio.sleep(0.3)
+
     def _safe_url_sync(self) -> str:
         """Get current URL without awaiting (for prompt building)."""
         try:
@@ -780,7 +806,12 @@ class DemoRecorder:
 
         self._loop = asyncio.get_running_loop()
         self._playwright = await async_playwright().start()
-        self._browser = await _launch_demo_browser(self._playwright)
+        # Human + live sessions default to VISIBLE (headful) so the person —
+        # or the owner watching the agent drive — actually sees the window.
+        # Tests force headless via payload["visible"]=False.
+        self._browser = await _launch_demo_browser(
+            self._playwright, headless=not self.headful
+        )
         self._context = await self._browser.new_context(
             viewport={"width": self.viewport["width"], "height": self.viewport["height"]},
             device_scale_factor=1,
@@ -911,6 +942,188 @@ class DemoRecorder:
         """Called by the page when a click is captured. Non-blocking enqueue."""
         # Bridge runs in the Playwright async loop — same loop as our task.
         await self._click_queue.put(payload)
+
+    # ----- live-drive: an external harness controls the session --------------
+    #
+    # This is the "talk to it as it records" surface. The owner (via any
+    # chat harness) says "click the house button, now type this" — each
+    # instruction becomes one ``act()`` call. The action runs in the SAME
+    # visible browser the owner is watching, is recorded as a real step
+    # (via the overlay bridge, or synthesized for navigate/scroll), and a
+    # fresh frame is streamed back so the harness can show it in chat.
+
+    def act(
+        self,
+        action: str,
+        selector: str | None = None,
+        value: str | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        """Thread-safe: execute one instruction against the live session.
+
+        Called from another thread (the MCP handler). Bridges into the
+        recorder's own event loop, waits for the step to be recorded, and
+        returns ``{stepIndex, action, selector, url, pageTitle, frameBase64}``.
+        """
+        if self._loop is None or self._page is None:
+            raise DemoRecorderError("live session is not running")
+        future = asyncio.run_coroutine_threadsafe(
+            self._act_async(action, selector, value, note), self._loop
+        )
+        return future.result(timeout=45.0)
+
+    async def _act_async(
+        self,
+        action: str,
+        selector: str | None,
+        value: str | None,
+        note: str | None,
+    ) -> dict[str, Any]:
+        action = (action or "").strip().lower()
+        if action not in ("click", "input", "navigate", "scroll"):
+            raise DemoRecorderError(
+                f"unsupported action {action!r} (use click/input/navigate/scroll)"
+            )
+        if action in ("click", "input") and not selector:
+            raise DemoRecorderError(f"{action} requires a selector")
+
+        before = len(self.spec.steps)
+        await self._execute_agent_action(action, selector, value)
+
+        # click/input fire the overlay bridge, which records the step on the
+        # capture loop. Give it a beat to land.
+        if action in ("click", "input"):
+            for _ in range(25):
+                if len(self.spec.steps) > before:
+                    break
+                await asyncio.sleep(0.08)
+
+        # navigate/scroll (or a click the overlay missed) → synthesize a step
+        # so every instruction is one frame in the finished walkthrough.
+        if len(self.spec.steps) == before:
+            await self._record_synthetic_step(action, selector, value)
+
+        step = self.spec.steps[-1]
+        if note and note.strip():
+            step.annotation = note.strip()
+            step.userDirection = note.strip()
+
+        # Stream a lightweight frame back to the harness/chat.
+        frame_b64 = ""
+        try:
+            jpeg = await self._page.screenshot(type="jpeg", quality=55)
+            frame_b64 = base64.b64encode(jpeg).decode("ascii")
+        except Exception as exc:
+            logger.warning("live frame capture failed: %s", exc)
+
+        # Keep the on-page step counter honest.
+        try:
+            await self._page.evaluate(
+                "(n) => { if (window.__demoRecorderSetStepCount)"
+                " window.__demoRecorderSetStepCount(n); }",
+                len(self.spec.steps),
+            )
+        except Exception:
+            pass
+
+        return {
+            "stepIndex": step.index,
+            "stepCount": len(self.spec.steps),
+            "action": action,
+            "selector": selector,
+            "url": await self._safe_title_or_url("url"),
+            "pageTitle": await self._safe_title_or_url("title"),
+            "annotation": step.annotation,
+            "frameBase64": frame_b64,
+        }
+
+    async def _safe_title_or_url(self, which: str) -> str:
+        try:
+            if not self._page:
+                return ""
+            return self._page.url if which == "url" else await self._page.title()
+        except Exception:
+            return self._last_url or ""
+
+    def narrate(self, text: str) -> dict[str, Any]:
+        """Thread-safe: set the caption/narration for the most recent step.
+
+        The owner saying "that's the house button" becomes the on-screen
+        annotation + voiceover text for the last recorded step.
+        """
+        text = (text or "").strip()
+        if not text:
+            raise DemoRecorderError("narration text is required")
+        if not self.spec.steps:
+            raise DemoRecorderError("no steps recorded yet — act first, then narrate")
+        step = self.spec.steps[-1]
+        step.annotation = text
+        step.userDirection = text
+        return {"stepIndex": step.index, "annotation": text}
+
+    async def _record_synthetic_step(
+        self, action: str, selector: str | None, value: str | None
+    ) -> None:
+        """Record a step for an action the overlay bridge won't catch.
+
+        Used for navigate/scroll (no DOM click) so every live instruction
+        still becomes a frame with a screenshot + a best-effort target rect.
+        """
+        assert self._page is not None
+        step_index = len(self.spec.steps)
+        timestamp_ms = int(time.time() * 1000) - (self._started_at_ms or 0)
+
+        rect = None
+        if selector:
+            try:
+                rect = await self._page.evaluate(
+                    """(sel) => { const el = document.querySelector(sel); if (!el) return null;
+                        const r = el.getBoundingClientRect();
+                        return { x: +r.x.toFixed(2), y: +r.y.toFixed(2),
+                                 width: +r.width.toFixed(2), height: +r.height.toFixed(2) }; }""",
+                    selector,
+                )
+            except Exception:
+                rect = None
+        if not rect:
+            rect = {
+                "x": 0, "y": 0,
+                "width": self.viewport["width"], "height": self.viewport["height"],
+            }
+
+        try:
+            png_bytes = await self._page.screenshot(full_page=False, type="png")
+        except Exception as exc:
+            logger.warning("synthetic step screenshot failed: %s", exc)
+            png_bytes = b""
+        shot_path = self.output_dir / f"step_{step_index:03d}.png"
+        if png_bytes:
+            shot_path.write_bytes(png_bytes)
+
+        step = DemoStep(
+            index=step_index,
+            timestamp=timestamp_ms,
+            pageUrl=self._safe_url_sync(),
+            pageTitle=await self._safe_title(),
+            interaction=Interaction(
+                type=action,
+                target={
+                    "selector": selector or "body",
+                    "tagName": "",
+                    "text": value or "",
+                    "boundingRect": rect,
+                },
+                hotspot={"xPct": 50, "yPct": 50},
+                value=value,
+            ),
+            screenshotBase64=None,
+            screenshotPath=str(shot_path.relative_to(self.output_dir.parent))
+            if png_bytes
+            else None,
+            screenshotError=None if png_bytes else "screenshot capture failed",
+        )
+        self.spec.steps.append(step)
+        self._last_url = step.pageUrl
 
     # ----- workflow-mode dialog loop -----------------------------------------
 
@@ -1109,14 +1322,24 @@ class DemoManager:
     def start(self, payload: dict[str, Any]) -> tuple[Any, str, str]:
         """Create a DemoRecorder and return (recorder, session_id, mode).
 
-        mode is 'human' (default — headful, user drives) or 'agent' (LLM picks
-        each next click via agent_record). The caller uses this to decide
-        whether to call ``recorder.start()`` or ``recorder.agent_record()``.
+        mode is:
+          * 'agent' — the LLM drives itself to the goal (agent_record); the
+            caller runs it headless by default (opt into visible via
+            payload['visible']=True).
+          * 'human' — a person clicks through the headful window (start()).
+          * 'live'  — an external harness drives turn-by-turn via
+            recorder.act()/narrate() in a persistent headful window. This is
+            the "talk to it as it records" surface.
+
+        payload['visible'] controls headful launch. Defaults: agent hidden,
+        human/live visible (the owner is watching). Tests pass visible=False.
         """
         url = (payload.get("url") or "").strip()
         name = (payload.get("name") or "Untitled demo").strip()
         goal = (payload.get("goal") or "").strip()
         mode = payload.get("mode", "human")
+        if mode not in ("agent", "human", "live"):
+            raise DemoRecorderError(f"unsupported mode {mode!r} (use agent/human/live)")
         if not url:
             raise DemoRecorderError("url is required")
         if not (url.startswith("http://") or url.startswith("https://")):
@@ -1134,6 +1357,10 @@ class DemoManager:
                 "workflow mode requires voice — pass voice=True alongside workflow=True"
             )
 
+        # Visible-on-screen: agent defaults hidden; human/live default visible.
+        default_visible = mode in ("human", "live")
+        headful = bool(payload.get("visible", default_visible))
+
         recorder = DemoRecorder(
             session_id=session_id,
             url=url,
@@ -1142,6 +1369,7 @@ class DemoManager:
             viewport=viewport,
             output_dir=out_dir,
             workflow_mode=workflow_enabled,
+            headful=headful,
         )
         if voice_enabled:
             try:

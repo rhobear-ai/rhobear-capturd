@@ -1,14 +1,16 @@
-"""DemoForge MCP server — exposes the demo + capture pipeline as 19 MCP tools.
+"""DemoForge MCP server — exposes the demo + capture pipeline as MCP tools.
 
 Demo tools (``demo.*`` namespace):
 
-* ``demo.record``     — open a headful browser and start capturing clicks
+* ``demo.record``     — start a recording (agent / live / human mode)
+* ``demo.act``        — drive one step of a live session (click/type/scroll/navigate)
+* ``demo.narrate``    — caption the most recent step of a live session
 * ``demo.stop``       — close the browser, persist the spec, kick off AI enrichment
 * ``demo.status``     — check pipeline progress for a demo
 * ``demo.list``       — enumerate every recorded demo on disk
 * ``demo.edit``       — rewrite a step's annotation and optionally re-synthesize voiceover
 * ``demo.delete``     — remove a demo and its files
-* ``demo.export``     — render a standalone HTML viewer
+* ``demo.export``     — render a standalone HTML viewer, MP4, or GIF
 * ``demo.zoom``       — append a ZOOM_TO camera keyframe
 * ``demo.pan``        — append a PAN_TO camera keyframe
 * ``demo.hold``       — append a HOLD camera keyframe
@@ -52,6 +54,7 @@ import asyncio
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -100,14 +103,22 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
     @mcp.tool(
         name="demo.record",
         description=(
-            "Start recording a product demo. mode='agent' (the headless "
-            "'prompt in, demo out' flow): an LLM drives the browser toward "
-            "`goal`, clicking through the product on its own; the session "
-            "finishes by itself — poll demo.stop with the returned sessionId "
-            "to persist + enrich. Requires an OpenAI-compatible gateway "
-            "(RHOBEAR_GW_API_KEY / RHOBEAR_GW_BASE_URL env on the host). "
-            "mode='human' opens a headful browser window on the host for a "
-            "person to click through, then call demo.stop."
+            "Start recording a product demo. Three modes:\n"
+            "• mode='agent' — the 'prompt in, demo out' flow: an LLM drives "
+            "the browser toward `goal` on its own; the session finishes by "
+            "itself, then call demo.stop to persist + enrich. Needs a gateway "
+            "(RHOBEAR_GW_API_KEY / RHOBEAR_GW_BASE_URL env on the host).\n"
+            "• mode='live' — YOU drive it turn-by-turn from chat: opens a "
+            "visible browser and returns a sessionId; send each instruction "
+            "with demo.act (click/type/scroll/navigate) and caption it with "
+            "demo.narrate, then demo.stop. This is the 'talk to it as it "
+            "records' surface — no gateway needed to drive.\n"
+            "• mode='human' — a person clicks through the visible window, "
+            "then demo.stop.\n"
+            "Pass visible=true to force the browser on-screen (agent mode is "
+            "hidden by default; live/human show by default). The browser opens "
+            "on whatever machine runs this MCP server — run it on the box with "
+            "the display for the on-screen experience."
         ),
         timeout=60.0,
     )
@@ -116,6 +127,7 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         name: str,
         goal: str = "",
         mode: str = "agent",
+        visible: bool | None = None,
         viewport: dict[str, int] | None = None,
         workflow: bool = False,
         voice: bool = False,
@@ -124,22 +136,23 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError("url is required")
         if not name:
             raise ValueError("name is required")
-        if mode not in ("agent", "human"):
-            raise ValueError(f"mode must be 'agent' or 'human', got {mode!r}")
+        if mode not in ("agent", "human", "live"):
+            raise ValueError(f"mode must be 'agent', 'live', or 'human', got {mode!r}")
         if mode == "agent" and not goal:
             raise ValueError("agent mode needs a goal — tell the agent what flow to demonstrate")
+        payload: dict[str, Any] = {
+            "url": url,
+            "name": name,
+            "goal": goal,
+            "mode": mode,
+            "viewport": viewport or {"width": 1440, "height": 900},
+            "workflow": workflow,
+            "voice": voice or workflow,
+        }
+        if visible is not None:
+            payload["visible"] = bool(visible)
         try:
-            recorder, session_id, mode = forge.start_recording(
-                {
-                    "url": url,
-                    "name": name,
-                    "goal": goal,
-                    "mode": mode,
-                    "viewport": viewport or {"width": 1440, "height": 900},
-                    "workflow": workflow,
-                    "voice": voice or workflow,
-                }
-            )
+            recorder, session_id, mode = forge.start_recording(payload)
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -161,11 +174,11 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
                 daemon=True,
             )
         else:
-            # Human mode: the recorder needs a live event loop for the whole
-            # session. Park the loop with run_forever(); recorder.stop()
-            # (called by demo.stop) schedules teardown onto it and then
-            # stops it — never close the loop out from under the browser.
-            def _spawn_human() -> None:
+            # human + live: the recorder needs a live event loop for the whole
+            # session. Park the loop with run_forever(); recorder.stop() /
+            # recorder.act() schedule work onto it and stop it at the end —
+            # never close the loop out from under the browser.
+            def _spawn_session() -> None:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -181,28 +194,106 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
                         pass
 
             thread = threading.Thread(
-                target=_spawn_human,
+                target=_spawn_session,
                 name=f"demo-recorder-{session_id}",
                 daemon=True,
             )
         thread.start()
+
+        # For live mode, wait until the browser + page are actually up so the
+        # caller's first demo.act doesn't race the launch.
+        if mode == "live":
+            for _ in range(150):
+                if recorder._page is not None or recorder.finished.is_set():
+                    break
+                time.sleep(0.1)
+
         _live_sessions[session_id] = {
             "recorder": recorder,
             "thread": thread,
             "mode": mode,
         }
-        return {
-            "sessionId": session_id,
-            "mode": mode,
-            "message": (
+        messages = {
+            "agent": (
                 "Agent recording started — it will click through the flow on "
                 "its own. Call demo.stop with this sessionId to wait for it "
                 "to finish and start AI enrichment."
-                if mode == "agent"
-                else "Recording started. Interact with the browser window, "
-                     "then call demo.stop with this sessionId."
+            ),
+            "live": (
+                "Live session ready. Send each instruction with demo.act "
+                "(action=click/input/scroll/navigate, selector, value), caption "
+                "steps with demo.narrate, then demo.stop to render. Each act "
+                "returns a frame you can show in chat."
+            ),
+            "human": (
+                "Recording started. Interact with the browser window, then "
+                "call demo.stop with this sessionId."
             ),
         }
+        return {
+            "sessionId": session_id,
+            "mode": mode,
+            "message": messages[mode],
+        }
+
+    # ---- demo.act (live-drive) -------------------------------------------
+
+    @mcp.tool(
+        name="demo.act",
+        description=(
+            "Drive one step of a live session (from demo.record mode='live'). "
+            "action='click'|'input'|'scroll'|'navigate'. click/input need a "
+            "CSS selector; input also takes value (text to type); navigate "
+            "takes value (URL); scroll takes value ('down'/'up'/'top'/'bottom' "
+            "or a pixel delta). Optional note becomes the step's on-screen "
+            "caption + narration. Executes in the visible browser, records the "
+            "step, and returns {stepIndex, url, pageTitle, frameBase64} — show "
+            "the frame in chat so the owner sees the stream."
+        ),
+        timeout=60.0,
+    )
+    async def demo_act(
+        session_id: str,
+        action: str,
+        selector: str = "",
+        value: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        if not session_id:
+            raise ValueError("sessionId is required")
+        live = _live_sessions.get(session_id)
+        if live is None or live["mode"] != "live":
+            raise ValueError(f"no live session for id {session_id!r} — start one with demo.record mode='live'")
+        recorder = live["recorder"]
+        try:
+            return await asyncio.to_thread(
+                recorder.act, action, selector or None, value or None, note or None
+            )
+        except DemoRecorderError as exc:
+            raise ValueError(str(exc)) from exc
+
+    # ---- demo.narrate (live-drive) ---------------------------------------
+
+    @mcp.tool(
+        name="demo.narrate",
+        description=(
+            "Set the caption + voiceover narration for the most recent step "
+            "of a live session. Use it to name what just happened — e.g. "
+            "\"This is the home button\" after clicking it."
+        ),
+        timeout=15.0,
+    )
+    async def demo_narrate(session_id: str, text: str) -> dict[str, Any]:
+        if not session_id:
+            raise ValueError("sessionId is required")
+        live = _live_sessions.get(session_id)
+        if live is None or live["mode"] != "live":
+            raise ValueError(f"no live session for id {session_id!r}")
+        recorder = live["recorder"]
+        try:
+            return await asyncio.to_thread(recorder.narrate, text)
+        except DemoRecorderError as exc:
+            raise ValueError(str(exc)) from exc
 
     # ---- demo.stop --------------------------------------------------------
 
