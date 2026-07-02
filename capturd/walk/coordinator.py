@@ -29,7 +29,7 @@ import os
 import re
 import shutil
 import threading
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -353,9 +353,11 @@ class DemoForge:
             text = (step.get("annotation") or "").strip()
             if not text:
                 raise DemoForgeError("cannot regenerate voiceover for empty annotation")
-            audio = await _synthesize_one(text, voice="en-US-AriaNeural")
+            audio, words = await _synthesize_one(text, voice="en-US-AriaNeural")
             if audio:
                 step["voiceoverBase64"] = base64.b64encode(audio).decode("ascii")
+            if words:
+                step["voiceoverWords"] = [asdict(wt) for wt in words]
         self.save_spec(demo_id, data)
         return step
 
