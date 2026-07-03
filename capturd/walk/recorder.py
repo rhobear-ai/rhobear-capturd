@@ -43,11 +43,18 @@ logger = logging.getLogger(__name__)
 
 # The script is plain JavaScript; we ship it as a string constant so it lands
 # in the page's main world on every navigation. It:
-#   * draws a fixed ● RECORDING badge bottom-right (not click-captured)
+#   * draws the Captur'd recorder HUD top-right (not click-captured), per
+#     rhobear-capturd-design: bg1 @92% + hairline + radius 8, REC pill with
+#     elapsed timer, a voice-state pill (idle/listening/transcribing/acting,
+#     sun-gold when non-idle), and a serif "last heard" line. Draggable.
 #   * listens for clicks in capture phase
 #   * builds a CSS selector, bounding rect, and percentage hotspot
 #   * pushes the payload to Python via window.recordClick (expose_function)
-#   * mirrors step count back into the badge via window.__demoRecorderStepCount
+#   * mirrors step count back via window.__demoRecorderStepCount (kept for
+#     callers; not rendered — the HUD contract is REC/voice-pill/last-heard)
+#   * exposes window.__demoHudSetState / window.__demoHudSetHeard so
+#     MIC_BUTTON_JS (voice.py) and the Python side (recorder._append_voice,
+#     _act_async) can drive the state machine honestly
 #
 # Notes on the selector builder: it prefers IDs, then classes (max 2),
 # then :nth-of-type for sibling disambiguation — same heuristic as
@@ -59,55 +66,171 @@ OVERLAY_JS = r"""
   window.__demoRecorderStepCount = 0;
 
   const BADGE_ID = '__demo-recorder-indicator';
+  const HUD_STATE_LABELS = {
+    idle: 'Idle', listening: 'Listening…', transcribing: 'Transcribing…', acting: 'Acting…',
+  };
+  let hudStartMs = 0;
+  let hudTimerHandle = null;
+  let hudActingWatchdog = null;
+
+  function injectHudStyles() {
+    const STYLE_ID = BADGE_ID + '__styles';
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent =
+      '@keyframes __demoHudRecPulse { 50% { opacity: .35; } }' +
+      '#__demo-recorder-indicator .__demo-hud__pill { color: #9db0bb; }' +
+      '#__demo-recorder-indicator .__demo-hud__pill--voice[data-state="listening"],' +
+      '#__demo-recorder-indicator .__demo-hud__pill--voice[data-state="transcribing"],' +
+      '#__demo-recorder-indicator .__demo-hud__pill--voice[data-state="acting"] {' +
+      '  color: #f2c230; border-color: #f2c230;' +
+      '}' +
+      '@media (prefers-reduced-motion: reduce) {' +
+      '  #__demo-recorder-indicator .__demo-hud__dot { animation: none; }' +
+      '}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function updateHudTimer() {
+    const label = document.getElementById(BADGE_ID + '__rec-label');
+    if (!label) return;
+    const elapsedS = Math.max(0, Math.floor((Date.now() - hudStartMs) / 1000));
+    const mm = String(Math.floor(elapsedS / 60)).padStart(2, '0');
+    const ss = String(elapsedS % 60).padStart(2, '0');
+    label.textContent = 'REC ' + mm + ':' + ss;
+  }
+
+  function makeDraggable(el) {
+    let dragging = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+    el.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.__demo-hud__mic')) return; // mic owns its own press
+      dragging = true;
+      el.style.cursor = 'grabbing';
+      const rect = el.getBoundingClientRect();
+      startLeft = rect.left; startTop = rect.top;
+      startX = e.clientX; startY = e.clientY;
+      el.style.right = 'auto';
+      el.style.left = startLeft + 'px';
+      el.style.top = startTop + 'px';
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX, dy = e.clientY - startY;
+      const maxLeft = window.innerWidth - el.offsetWidth - 4;
+      const maxTop = window.innerHeight - el.offsetHeight - 4;
+      el.style.left = Math.max(4, Math.min(maxLeft, startLeft + dx)) + 'px';
+      el.style.top = Math.max(4, Math.min(maxTop, startTop + dy)) + 'px';
+    });
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      el.style.cursor = 'grab';
+      try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+    }
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+  }
+
+  function setHudState(state) {
+    if (!HUD_STATE_LABELS[state]) return;
+    const pill = document.getElementById(BADGE_ID + '__voice');
+    if (pill) {
+      pill.textContent = HUD_STATE_LABELS[state];
+      pill.dataset.state = state;
+    }
+    if (hudActingWatchdog) { clearTimeout(hudActingWatchdog); hudActingWatchdog = null; }
+    // Honesty guard: "acting" is driven by an out-of-process harness (the MCP
+    // caller) — if it never confirms completion, don't lie forever.
+    if (state === 'acting') {
+      hudActingWatchdog = setTimeout(() => setHudState('idle'), 6000);
+    }
+  }
+
+  function setHudHeard(text) {
+    const p = document.getElementById(BADGE_ID + '__heard');
+    if (!p) return;
+    text = (text || '').trim();
+    if (!text) {
+      p.style.display = 'none';
+      p.textContent = '';
+      return;
+    }
+    p.textContent = '“' + text + '”';
+    p.style.display = 'block';
+  }
 
   function ensureBadge() {
     let badge = document.getElementById(BADGE_ID);
     if (badge) return badge;
+    injectHudStyles();
     badge = document.createElement('div');
     badge.id = BADGE_ID;
     badge.style.cssText = [
-      'position: fixed',
-      'right: 16px',
-      'bottom: 16px',
-      'z-index: 2147483647',
-      'padding: 8px 14px',
-      'border-radius: 999px',
-      'background: rgba(20, 20, 24, 0.92)',
-      'color: #fff',
-      'font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-      'box-shadow: 0 4px 18px rgba(0,0,0,0.35)',
-      'display: flex',
-      'align-items: center',
-      'gap: 8px',
-      'pointer-events: auto',
-      'user-select: none',
-      'letter-spacing: 0.04em',
+      'position: fixed', 'top: 16px', 'right: 16px', 'z-index: 2147483647',
+      'max-width: 320px', 'padding: 12px 14px', 'border-radius: 8px',
+      'background: rgba(15,21,28,0.92)', 'border: 1px solid rgba(151,183,196,0.12)',
+      'font: 13px/1.4 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Helvetica Neue", sans-serif',
+      'color: #e8eef2', 'cursor: grab', 'user-select: none', '-webkit-user-select: none',
+      'touch-action: none',
     ].join(';');
-    const dot = document.createElement('span');
-    dot.style.cssText = [
-      'width: 10px',
-      'height: 10px',
-      'border-radius: 50%',
-      'background: #ff3b30',
-      'box-shadow: 0 0 0 0 rgba(255,59,48,0.6)',
-      'animation: __demoRecPulse 1.4s ease-out infinite',
-    ].join(';');
-    const label = document.createElement('span');
-    label.id = BADGE_ID + '__label';
-    label.textContent = 'RECORDING · 0 steps';
-    badge.appendChild(dot);
-    badge.appendChild(label);
-    const style = document.createElement('style');
-    style.textContent = '@keyframes __demoRecPulse { 0% { box-shadow: 0 0 0 0 rgba(255,59,48,0.6); } 70% { box-shadow: 0 0 0 12px rgba(255,59,48,0); } 100% { box-shadow: 0 0 0 0 rgba(255,59,48,0); } }';
-    (document.head || document.documentElement).appendChild(style);
+
+    const row = document.createElement('div');
+    row.id = BADGE_ID + '__row';
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+    // color is intentionally NOT inline — the voice pill's [data-state]
+    // color override in injectHudStyles() can't beat an inline style, so
+    // the base color has to come from the stylesheet too.
+    const pillCss = 'display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(151,183,196,0.24);' +
+      'border-radius:999px;padding:2px 10px;font-size:12px;white-space:nowrap;';
+
+    const recPill = document.createElement('span');
+    recPill.className = '__demo-hud__pill __demo-hud__pill--rec';
+    recPill.style.cssText = pillCss;
+    const dot = document.createElement('i');
+    dot.className = '__demo-hud__dot';
+    dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;' +
+      'background:#e05252;animation:__demoHudRecPulse 1s ease-in-out infinite;';
+    const recLabel = document.createElement('span');
+    recLabel.id = BADGE_ID + '__rec-label';
+    recLabel.textContent = 'REC 00:00';
+    recPill.appendChild(dot);
+    recPill.appendChild(recLabel);
+
+    const voicePill = document.createElement('span');
+    voicePill.id = BADGE_ID + '__voice';
+    voicePill.className = '__demo-hud__pill __demo-hud__pill--voice';
+    voicePill.style.cssText = pillCss;
+    voicePill.dataset.state = 'idle';
+    voicePill.textContent = HUD_STATE_LABELS.idle;
+
+    row.appendChild(recPill);
+    row.appendChild(voicePill);
+
+    const heard = document.createElement('p');
+    heard.id = BADGE_ID + '__heard';
+    heard.style.cssText = 'margin:10px 0 0;display:none;' +
+      'font:italic 13px/1.5 "New York","Iowan Old Style",Charter,Georgia,"Times New Roman",serif;' +
+      'color:#9db0bb;';
+
+    badge.appendChild(row);
+    badge.appendChild(heard);
     (document.body || document.documentElement).appendChild(badge);
+    makeDraggable(badge);
+
+    hudStartMs = Date.now();
+    if (hudTimerHandle) clearInterval(hudTimerHandle);
+    hudTimerHandle = setInterval(updateHudTimer, 1000);
+    updateHudTimer();
     return badge;
   }
 
   function setStepCount(n) {
+    // Step count isn't part of the HUD's rendered contract (REC/voice-pill/
+    // last-heard) — kept as state for any caller that still reads it.
     window.__demoRecorderStepCount = n;
-    const label = document.getElementById(BADGE_ID + '__label');
-    if (label) label.textContent = 'RECORDING · ' + n + ' step' + (n === 1 ? '' : 's');
   }
 
   function buildSelector(el) {
@@ -223,6 +346,10 @@ OVERLAY_JS = r"""
 
   // Expose step-count updater for the Python side.
   window.__demoRecorderSetStepCount = setStepCount;
+  // Expose HUD state/heard setters — voice.py's mic button and the Python
+  // recorder (act/voice hooks) both drive these.
+  window.__demoHudSetState = setHudState;
+  window.__demoHudSetHeard = setHudHeard;
 })();
 """
 
@@ -261,7 +388,7 @@ CURSOR_OVERLAY_JS = r"""
     ring.style.cssText = [
       'position: fixed', 'left: -200px', 'top: -200px',
       'width: 20px', 'height: 20px', 'margin: -10px 0 0 -10px', 'border-radius: 50%',
-      'border: 3px solid rgba(79,140,255,0.9)', 'z-index: 2147483645',
+      'border: 3px solid rgba(242,194,48,0.9)', 'z-index: 2147483645', /* sun-gold */
       'pointer-events: none', 'opacity: 0', 'visibility: hidden',
     ].join(';');
     (document.body || document.documentElement).appendChild(c);
@@ -1112,6 +1239,11 @@ class DemoRecorder:
         if action in ("click", "input") and not selector:
             raise DemoRecorderError(f"{action} requires a selector")
 
+        try:
+            await self._page.evaluate("() => window.__demoHudSetState && window.__demoHudSetState('acting')")
+        except Exception:
+            pass
+
         # Capture the target's on-screen point BEFORE acting — a click that
         # navigates destroys the element, so we can't find it afterward.
         target_pt = None
@@ -1179,6 +1311,11 @@ class DemoRecorder:
         except Exception:
             pass
 
+        try:
+            await self._page.evaluate("() => window.__demoHudSetState && window.__demoHudSetState('idle')")
+        except Exception:
+            pass
+
         return {
             "stepIndex": step.index,
             "stepCount": len(self.spec.steps),
@@ -1217,10 +1354,35 @@ class DemoRecorder:
     # ----- voice-drive: the owner talks, the harness hears + acts -------------
 
     def _append_voice(self, text: str) -> None:
-        """on_utterance callback for the VoiceLoop (runs on the recorder loop)."""
-        if text and text.strip():
-            with self._voice_lock:
-                self._voice_transcripts.append(text.strip())
+        """on_utterance callback for the VoiceLoop (runs on the recorder loop).
+
+        Fires for every transcription path (mic button, workflow-mode
+        push_to_talk, continuous) — so this is where the HUD's last-heard
+        line + 'acting' state get set for paths that don't go through the
+        mic button's own JS handlers. Stays synchronous (queue append must
+        be immediate for poll_voice); the HUD update is a fire-and-forget
+        task since it only touches the page, never the queue.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        with self._voice_lock:
+            self._voice_transcripts.append(text)
+        if self._page is not None:
+            try:
+                asyncio.create_task(self._push_hud_heard(text))
+            except RuntimeError:
+                pass  # no running loop (e.g. direct unit-test call)
+
+    async def _push_hud_heard(self, text: str) -> None:
+        try:
+            await self._page.evaluate(
+                "(t) => { window.__demoHudSetHeard && window.__demoHudSetHeard(t);"
+                " window.__demoHudSetState && window.__demoHudSetState('acting'); }",
+                text,
+            )
+        except Exception:
+            pass
 
     def poll_voice(self) -> dict[str, Any]:
         """Thread-safe: return and CLEAR the queued voice transcripts.
@@ -1373,6 +1535,11 @@ class DemoRecorder:
             # Continue anyway — the overlay shows the question text.
 
         # 2. Listen for answer (8s window).
+        if self._page is not None:
+            try:
+                await self._page.evaluate("() => window.__demoHudSetState && window.__demoHudSetState('listening')")
+            except Exception:
+                pass
         try:
             transcript = await self.voice_loop.push_to_talk(duration_ms=8000)
         except Exception as exc:

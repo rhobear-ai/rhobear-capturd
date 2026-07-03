@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-mode="cloud">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Captur'd — dashboard</title>
+<meta name="description" content="Your Captur'd account: generation history, usage, and hosted MCP endpoint." />
+
+<!--
+  Captur'd hosted dashboard.  Single self-contained file, same deployable
+  pattern as web/index.html — inline CSS/JS, one deploy-config knob, honest
+  degradation when it's unset (never fake data presented as live).
+
+  STUB SEAM NOTICE: the hosted service repo does not exist yet. Every read
+  in this file goes through Api.stub_* below — greppable, one file, named
+  so a real service repo re-points them instead of rewriting this page.
+  See design-brief/spines/05-capturd-technical-spine.md.
+
+  DEPLOYER CONFIG: set these once for your deployment.
+-->
+<script>
+  window.CAPTURD_DASHBOARD_CONFIG = {
+    apiBase: "",         // e.g. "/api" — hosted service base URL (session, generations, meters)
+    signInUrl: "",        // e.g. "/auth/start"
+    mcpEndpointBase: "",  // e.g. "https://mcp.captur.dev/<account>" — shown in the provisioning card
+    upgradeUrl: "",       // e.g. "/billing/upgrade"
+    proPrice: "$19",
+  };
+</script>
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg0: #0a0e13; --bg1: #0f151c; --bg2: #151d26; --bg3: #1c2631;
+    --bg-glass: rgba(15,21,28,0.86);
+    --line: rgba(151,183,196,0.12); --line-strong: rgba(151,183,196,0.24);
+    --text: #e8eef2; --text-2: #9db0bb; --text-3: #5f7280;
+    --accent: #f2c230; --accent-press: #dfae2c; --accent-soft: rgba(242,194,48,0.13); --accent-ink: #1a1206;
+    --warn: #e0743a; --warn-soft: rgba(224,116,58,0.14);
+    --danger: #e05252; --danger-soft: rgba(224,82,82,0.13);
+    --ok: #53c98b; --ok-soft: rgba(83,201,139,0.13);
+    --r: 8px; --pill: 999px;
+    --sans: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, "Helvetica Neue", sans-serif;
+    --serif: "New York", "Iowan Old Style", Charter, Georgia, "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+    --t-hover: 120ms var(--ease); --t-panel: 200ms var(--ease);
+    --maxw: 1040px;
+  }
+  html, body { margin: 0; padding: 0; background: var(--bg0); color: var(--text); }
+  body {
+    font-family: var(--sans); font-size: 13.5px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  button { font: inherit; color: inherit; }
+  code { font-family: var(--mono); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Top rail — brand left, session state + account chip right        */
+  /* ---------------------------------------------------------------- */
+  .rail-top {
+    height: 38px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: var(--bg1); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+  .brand .mark circle, .brand .mark rect { transition: none; }
+  .brand .wordmark {
+    font-weight: 500; letter-spacing: 0.14em; font-size: 11px; text-transform: uppercase;
+    color: var(--text);
+  }
+  .brand .sub { color: var(--text-3); font-size: 12.5px; margin-left: 2px; }
+  .rail-right { display: flex; align-items: center; gap: 10px; }
+  .session-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line-strong); border-radius: var(--pill);
+    padding: 2px 10px; font-size: 12px; color: var(--text-2);
+  }
+  .session-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); }
+  .session-pill[data-state="signed-out"] .dot { background: var(--danger); }
+  .session-pill[data-state="preview"] .dot { background: var(--accent); }
+  .session-pill[data-state="loading"] .dot { background: var(--text-3); animation: pulse-dot 1.2s ease-in-out infinite; }
+  @keyframes pulse-dot { 50% { opacity: 0.3; } }
+  .account-chip {
+    display: flex; align-items: center; gap: 6px; border-radius: var(--pill);
+    padding: 3px 10px 3px 4px; border: 1px solid transparent; cursor: pointer;
+    transition: background var(--t-hover);
+  }
+  .account-chip:hover { background: var(--bg3); }
+  .account-chip .avatar {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+    display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 500;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Canvas                                                            */
+  /* ---------------------------------------------------------------- */
+  main { max-width: var(--maxw); margin: 0 auto; padding: 32px 24px 64px; }
+
+  /* Preview watermark — ?preview=1 only, never confused for real data. */
+  .preview-banner {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--warn-soft); border: 1px solid var(--warn); border-radius: var(--r);
+    color: var(--warn); padding: 8px 14px; font-size: 12.5px; margin-bottom: 24px;
+  }
+  .preview-banner b { font-weight: 500; }
+
+  /* ---- Loading ---- */
+  #view-loading { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 96px 0; }
+  .constellation { display: flex; gap: 10px; }
+  .constellation i {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    opacity: 0.25; animation: constellation 1.6s var(--ease) infinite;
+  }
+  .constellation i:nth-child(2) { animation-delay: 0.15s; }
+  .constellation i:nth-child(3) { animation-delay: 0.3s; }
+  .constellation i:nth-child(4) { animation-delay: 0.45s; }
+  @keyframes constellation { 0%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+  #view-loading .label { color: var(--text-3); font-size: 12.5px; }
+
+  /* ---- Signed-out (real state, not a placeholder) ---- */
+  #view-signed-out { display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 96px 24px; text-align: center; }
+  #view-signed-out .mark-lg { width: 56px; height: 56px; }
+  #view-signed-out h1 { font-size: 19px; font-weight: 500; margin: 0; }
+  #view-signed-out p { color: var(--text-2); margin: 0; max-width: 380px; }
+
+  /* ---- Dashboard shell ---- */
+  #view-dashboard { display: none; flex-direction: column; gap: 24px; }
+  .section-label {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3);
+    margin: 0 0 8px 2px;
+  }
+  .card {
+    background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 16px;
+  }
+  .card + .card { margin-top: 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .empty-row {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+    color: var(--text-2); padding: 8px 2px;
+  }
+  .empty-row .stub-note { color: var(--text-3); font-size: 12px; }
+  .empty-row code { color: var(--text-2); background: var(--bg3); border-radius: 4px; padding: 1px 5px; }
+
+  .meter-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .meter-row:last-child { margin-bottom: 0; }
+  .meter-row .label { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-2); }
+  .meter-track { height: 4px; border-radius: 2px; background: var(--bg3); overflow: hidden; }
+  .meter-fill { height: 100%; background: var(--text-3); border-radius: 2px; width: 0%; }
+
+  .endpoint-row {
+    display: flex; align-items: center; gap: 8px; background: var(--bg3);
+    border-radius: 6px; padding: 8px 10px; font-family: var(--mono); font-size: 12.5px;
+    color: var(--text-2); overflow-x: auto;
+  }
+  .endpoint-row code { flex: 1 1 auto; white-space: nowrap; background: none; padding: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border-radius: var(--r); padding: 7px 14px; font-size: 13px; font-weight: 500;
+    border: 1px solid var(--line-strong); background: transparent; color: var(--text);
+    cursor: pointer; transition: background var(--t-hover), border-color var(--t-hover);
+  }
+  .btn:hover { background: var(--bg3); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn-primary:hover { background: var(--accent-press); border-color: var(--accent-press); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  .upsell-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .upsell-card .copy h3 { margin: 0 0 4px; font-size: 14px; font-weight: 500; }
+  .upsell-card .copy p { margin: 0; color: var(--text-2); font-size: 12.5px; }
+
+  /* ---- Toast ---- */
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px);
+    background: var(--bg-glass); backdrop-filter: blur(14px);
+    border: 1px solid var(--line-strong); border-radius: var(--r);
+    padding: 10px 16px; font-size: 12.5px; color: var(--text);
+    opacity: 0; pointer-events: none; transition: opacity var(--t-panel), transform var(--t-panel);
+    max-width: 480px; text-align: center; z-index: 40;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+</style>
+</head>
+<body>
+
+<div class="rail-top">
+  <a class="brand" href="#" aria-label="Captur'd dashboard">
+    <svg class="mark" width="20" height="20" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="8" stroke="#f2c230" stroke-width="1.6"/>
+      <circle cx="16" cy="16" r="7.4" stroke="#f7d669" stroke-width="1.6"/>
+      <circle cx="16" cy="16" r="2.4" fill="#f2c230"/>
+    </svg>
+    <span class="wordmark">CAPTUR'D</span><span class="sub">by Sun Sponge</span>
+  </a>
+  <div class="rail-right">
+    <span class="session-pill" id="session-pill" data-state="loading"><i class="dot"></i><span id="session-pill-label">Checking session…</span></span>
+    <div class="account-chip" id="account-chip" style="display:none;" role="button" tabindex="0" aria-haspopup="true">
+      <span class="avatar" id="account-avatar">–</span>
+      <span id="account-email">—</span>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div class="preview-banner" id="preview-banner" style="display:none;">
+    <b>Preview</b> — this is the dashboard shell with no account attached. Every section below is honest about not being wired to a real service yet.
+  </div>
+
+  <section id="view-loading">
+    <div class="constellation"><i></i><i></i><i></i><i></i></div>
+    <div class="label">Checking your session…</div>
+  </section>
+
+  <section id="view-signed-out">
+    <svg class="mark-lg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="1.2" y="1.2" width="29.6" height="29.6" rx="8" stroke="#f2c230" stroke-width="1.6"/>
+      <circle cx="16" cy="16" r="7.4" stroke="#f7d669" stroke-width="1.6"/>
+      <circle cx="16" cy="16" r="2.4" fill="#f2c230"/>
+    </svg>
+    <h1>Sign in to see your generations</h1>
+    <p>Your Captur'd account holds generation history, usage, and your hosted MCP endpoint. The local CLI never needs this — it's unlimited on its own.</p>
+    <button class="btn btn-primary" id="btn-sign-in">Sign in</button>
+  </section>
+
+  <section id="view-dashboard">
+    <div>
+      <p class="section-label">Generation history</p>
+      <div class="card" id="card-generations"></div>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <p class="section-label">Usage</p>
+        <div class="card" id="card-meters"></div>
+      </div>
+      <div>
+        <p class="section-label">Hosted MCP endpoint</p>
+        <div class="card" id="card-mcp"></div>
+      </div>
+    </div>
+
+    <div>
+      <p class="section-label">Plan</p>
+      <div class="card upsell-card">
+        <div class="copy">
+          <h3>Pro — <span id="pro-price"></span>/mo</h3>
+          <p>More generations and shots per month, priority render queue.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btn-upgrade">Upgrade</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+  const CFG = window.CAPTURD_DASHBOARD_CONFIG || {};
+  const $ = (s, r = document) => r.querySelector(s);
+
+  // ---- toast (honest-degrade pattern, same as web/index.html) ----
+  let toastT;
+  function toast(msg) {
+    const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3400);
+  }
+
+  // -------------------------------------------------------------
+  // Api.stub_* — the hosted service repo does not exist yet. Every
+  // call here is a clearly-named stub seam: it never fabricates
+  // account data, it reports whether it's wired (CFG.apiBase set)
+  // and returns an honest empty/unwired shape otherwise. When the
+  // real service lands, these bodies get swapped for fetch(CFG.apiBase + ...)
+  // calls — the call sites below don't change.
+  // -------------------------------------------------------------
+  const Api = {
+    async stub_session() {
+      if (!CFG.apiBase) return { wired: false, signedIn: false };
+      // TODO(hosted-service): GET `${CFG.apiBase}/session`
+      return { wired: true, signedIn: false };
+    },
+    async stub_generations() {
+      if (!CFG.apiBase) return { wired: false, items: [] };
+      // TODO(hosted-service): GET `${CFG.apiBase}/generations`
+      return { wired: true, items: [] };
+    },
+    async stub_meters() {
+      if (!CFG.apiBase) return { wired: false, generationsUsed: null, generationsLimit: null, shotsUsed: null, shotsLimit: null };
+      // TODO(hosted-service): GET `${CFG.apiBase}/meters`
+      return { wired: true, generationsUsed: null, generationsLimit: null, shotsUsed: null, shotsLimit: null };
+    },
+    stub_mcpEndpoint() {
+      return { wired: !!CFG.mcpEndpointBase, url: CFG.mcpEndpointBase || null };
+    },
+  };
+
+  // -------------------------------------------------------------
+  // Session state machine — loading -> signed-out | dashboard.
+  // ?preview=1 forces the dashboard shell open for visual QA; it
+  // never fakes wired data, it only walks past the sign-in gate —
+  // every card underneath still renders its honest unwired state.
+  // -------------------------------------------------------------
+  const params = new URLSearchParams(location.search);
+  const isPreview = params.get("preview") === "1";
+
+  function setSessionPill(state, label) {
+    const pill = $("#session-pill");
+    pill.dataset.state = state;
+    $("#session-pill-label").textContent = label;
+  }
+
+  function showView(name) {
+    ["loading", "signed-out", "dashboard"].forEach((v) => {
+      $("#view-" + v).style.display = "none";
+    });
+    const el = $("#view-" + name);
+    el.style.display = name === "dashboard" ? "flex" : "flex";
+  }
+
+  function renderGenerations(data) {
+    const card = $("#card-generations");
+    if (!data.wired) {
+      card.innerHTML =
+        '<div class="empty-row">' +
+        '<span>No generations to show yet.</span>' +
+        '<span class="stub-note">Not wired yet — connect <code>CAPTURD_DASHBOARD_CONFIG.apiBase</code> to a running hosted service to see real generation history.</span>' +
+        '</div>';
+      return;
+    }
+    if (!data.items.length) {
+      card.innerHTML = '<div class="empty-row"><span>No generations yet — run <code>capturd walk record</code> and export to see them here.</span></div>';
+      return;
+    }
+    card.innerHTML = data.items.map((g) => '<div class="empty-row"><span>' + g.name + '</span></div>').join("");
+  }
+
+  function renderMeters(data) {
+    const card = $("#card-meters");
+    const genLabel = data.wired && data.generationsLimit != null
+      ? (data.generationsUsed + " of " + data.generationsLimit + " generations used")
+      : "— of — generations used";
+    const shotLabel = data.wired && data.shotsLimit != null
+      ? (data.shotsUsed + " of " + data.shotsLimit + " shots used")
+      : "— of — shots used";
+    const genPct = data.wired && data.generationsLimit ? Math.min(100, 100 * data.generationsUsed / data.generationsLimit) : 0;
+    const shotPct = data.wired && data.shotsLimit ? Math.min(100, 100 * data.shotsUsed / data.shotsLimit) : 0;
+    card.innerHTML =
+      '<div class="meter-row"><div class="label"><span>' + genLabel + '</span></div>' +
+      '<div class="meter-track"><div class="meter-fill" style="width:' + genPct + '%"></div></div></div>' +
+      '<div class="meter-row"><div class="label"><span>' + shotLabel + '</span></div>' +
+      '<div class="meter-track"><div class="meter-fill" style="width:' + shotPct + '%"></div></div></div>' +
+      (data.wired ? '' : '<p class="stub-note" style="margin:8px 0 0;">Not wired yet — connect <code>CAPTURD_DASHBOARD_CONFIG.apiBase</code> for real usage. The local CLI has no limits regardless.</p>');
+    // Upgrade card only ever appears on real exhaustion data — never guessed.
+  }
+
+  function renderMcp() {
+    const card = $("#card-mcp");
+    const data = Api.stub_mcpEndpoint();
+    card.innerHTML =
+      '<div class="endpoint-row"><code id="mcp-url">' + (data.url || "Not wired yet — connect CAPTURD_DASHBOARD_CONFIG.mcpEndpointBase") + '</code>' +
+      '<button class="btn btn-sm" id="btn-copy-mcp"' + (data.wired ? '' : ' disabled') + '>Copy</button></div>';
+    const btn = $("#btn-copy-mcp");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        navigator.clipboard && navigator.clipboard.writeText(data.url || "").then(() => toast("Copied."));
+      });
+    }
+  }
+
+  async function renderDashboard() {
+    if (isPreview) $("#preview-banner").style.display = "flex";
+    $("#account-email").textContent = isPreview ? "preview@example.com" : "—";
+    $("#account-avatar").textContent = "P";
+    $("#account-chip").style.display = "flex";
+    setSessionPill(isPreview ? "preview" : "signed-out", isPreview ? "Preview" : "Signed in");
+    showView("dashboard");
+
+    const [gens, meters] = await Promise.all([Api.stub_generations(), Api.stub_meters()]);
+    renderGenerations(gens);
+    renderMeters(meters);
+    renderMcp();
+    $("#pro-price").textContent = CFG.proPrice || "$19";
+  }
+
+  function showSignedOut() {
+    setSessionPill("signed-out", "Signed out");
+    $("#account-chip").style.display = "none";
+    showView("signed-out");
+  }
+
+  $("#btn-sign-in").addEventListener("click", () => {
+    if (CFG.signInUrl) { window.location.href = CFG.signInUrl; return; }
+    toast("Set CAPTURD_DASHBOARD_CONFIG.signInUrl to wire real sign-in.");
+  });
+  $("#btn-upgrade").addEventListener("click", () => {
+    if (CFG.upgradeUrl) { window.location.href = CFG.upgradeUrl; return; }
+    toast("Set CAPTURD_DASHBOARD_CONFIG.upgradeUrl to wire real billing.");
+  });
+
+  async function init() {
+    showView("loading");
+    setSessionPill("loading", "Checking session…");
+    const session = await Api.stub_session();
+    if (isPreview) { await renderDashboard(); return; }
+    if (session.wired && session.signedIn) { await renderDashboard(); return; }
+    showSignedOut();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

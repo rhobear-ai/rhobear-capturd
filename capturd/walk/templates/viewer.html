@@ -9,13 +9,13 @@
     /*  Reset + base                                                       */
     /* ------------------------------------------------------------------ */
     *, *::before, *::after { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; height: 100%; background: #0a0c10; color: #e8eaed;
-                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                              "Helvetica Neue", Arial, sans-serif;
+    html, body { margin: 0; padding: 0; height: 100%; background: #0a0e13; color: #e8eef2;
+                 font-family: -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+                              system-ui, "Helvetica Neue", sans-serif;
                  overflow: hidden; }
     button { font: inherit; color: inherit; background: transparent; border: 0;
              cursor: pointer; padding: 0; }
-    button:focus-visible { outline: 2px solid #4f8cff; outline-offset: 2px; border-radius: 4px; }
+    button:focus-visible { outline: 2px solid #f2c230; outline-offset: 2px; border-radius: 4px; }
 
     /* ------------------------------------------------------------------ */
     /*  Viewer shell                                                       */
@@ -23,7 +23,7 @@
     #viewer {
       position: fixed; inset: 0;
       display: flex; flex-direction: column;
-      background: #0a0c10;
+      background: #0a0e13;
       user-select: none;
       -webkit-user-select: none;
     }
@@ -34,7 +34,7 @@
     #screenshot-container {
       position: relative; flex: 1 1 auto;
       overflow: hidden;
-      background: #0a0c10;
+      background: #0a0e13;
     }
     #screenshot {
       display: block;
@@ -61,7 +61,7 @@
     }
     #hotspot-ring {
       fill: none;
-      stroke: #ff3b30;
+      stroke: #f2c230;
       stroke-width: 2;
       pointer-events: auto;
       cursor: pointer;
@@ -172,9 +172,12 @@
 
     #progress-bar {
       display: flex; gap: 3px;
-      margin-bottom: 10px;
+      margin-bottom: 14px;
+      cursor: pointer;
+      touch-action: none;
     }
     .progress-segment {
+      position: relative;
       flex: 1 1 0;
       height: 4px;
       background: rgba(255,255,255,0.18);
@@ -182,12 +185,32 @@
       border: 0;
       padding: 0;
       cursor: pointer;
+      overflow: visible;
       transition: background 160ms ease, height 160ms ease;
     }
     .progress-segment:hover { height: 6px; }
     .progress-segment.done   { background: rgba(255,255,255,0.55); }
-    .progress-segment.current{ background: #4f8cff; height: 6px; }
+    .progress-segment.current{ background: #f2c230; height: 6px; }
     .progress-segment:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    /* Camera-hold span — a flat gold segment over the portion of the step  */
+    /* where the timeline is holding on the target (capturd HUD spec).     */
+    .progress-segment__hold {
+      position: absolute; top: 0; bottom: 0;
+      background: rgba(242,194,48,0.55);
+      border-radius: 2px;
+      pointer-events: none;
+    }
+    /* Zoom/pan keyframe — a gold diamond marker on the track.              */
+    .progress-segment__marker {
+      position: absolute; top: 50%; width: 6px; height: 6px;
+      background: #f2c230; transform: translate(-50%, -50%) rotate(45deg);
+      border-radius: 1px; pointer-events: none;
+    }
+    /* Voice beat — a tick mark under the track.                            */
+    .progress-segment__beat {
+      position: absolute; top: 100%; margin-top: 3px; width: 1px; height: 4px;
+      background: rgba(151,183,196,0.55); pointer-events: none;
+    }
 
     #info-row {
       display: flex; align-items: center; justify-content: space-between;
@@ -232,8 +255,8 @@
     .ctrl-btn[aria-disabled="true"] {
       opacity: 0.35; cursor: not-allowed;
     }
-    .ctrl-btn.primary { background: #4f8cff; color: #fff; width: 44px; height: 44px; }
-    .ctrl-btn.primary:hover { background: #3d78ea; }
+    .ctrl-btn.primary { background: #f2c230; color: #1a1206; width: 44px; height: 44px; }
+    .ctrl-btn.primary:hover { background: #dfae2c; }
 
     /* ------------------------------------------------------------------ */
     /*  Empty / error states                                               */
@@ -262,7 +285,7 @@
         <img id="screenshot" alt="" />
         <svg id="hotspot-layer" aria-hidden="true">
           <circle id="hotspot-ring" cx="-9999" cy="-9999" r="14" />
-          <circle id="hotspot"      cx="-9999" cy="-9999" r="14" fill="#ff3b30" fill-opacity="0.85" />
+          <circle id="hotspot"      cx="-9999" cy="-9999" r="14" fill="#f2c230" fill-opacity="0.85" />
         </svg>
         <div id="spotlight-overlay" aria-hidden="true"></div>
         <div id="cursor" aria-hidden="true">
@@ -1216,6 +1239,52 @@
       });
     }
 
+    // Real camera-timeline data (authored or synthesized default) projected
+    // onto a step's segment: hold spans (flat gold) + zoom/pan keyframes
+    // (gold diamond), positioned by their real cumulative offset within the
+    // step's total keyframe duration. No fabricated data — same timeline
+    // playTimeline() actually executes.
+    function stepTimelineMarkers(stepIndex) {
+      const kfs = effectiveKeyframes(stepIndex);
+      let total = 0;
+      kfs.forEach((kf) => { total += (kf.duration || 500); });
+      const holds = [], marks = [];
+      if (total <= 0) return { holds, marks };
+      let t = 0;
+      kfs.forEach((kf) => {
+        const dur = kf.duration || 500;
+        const leftPct = (t / total) * 100;
+        const widthPct = (dur / total) * 100;
+        if (kf.action === CAMERA_ACTIONS.HOLD) {
+          holds.push({ leftPct, widthPct });
+        } else if (kf.action === CAMERA_ACTIONS.ZOOM_TO || kf.action === CAMERA_ACTIONS.PAN_TO) {
+          marks.push({ leftPct: leftPct + widthPct / 2 });
+        }
+        t += dur;
+      });
+      return { holds, marks };
+    }
+
+    // Voice beats — real word timestamps when the pipeline produced them;
+    // otherwise a single centred beat when the step carries a spoken
+    // userDirection (live-drive), never a fabricated cadence.
+    function stepVoiceBeats(stepIndex) {
+      const step = STATE.spec.steps[stepIndex];
+      const words = step && step.voiceoverWords;
+      const beats = [];
+      if (words && words.length) {
+        const span = Math.max(1, words[words.length - 1].tEndMs || 0);
+        words.forEach((w) => {
+          if (Number.isFinite(w.tStartMs)) {
+            beats.push({ leftPct: Math.max(0, Math.min(100, (w.tStartMs / span) * 100)) });
+          }
+        });
+      } else if (step && step.userDirection) {
+        beats.push({ leftPct: 50 });
+      }
+      return beats;
+    }
+
     function buildProgressBar() {
       $progress.innerHTML = '';
       STATE.spec.steps.forEach((_, i) => {
@@ -1231,8 +1300,70 @@
           goToStep(i, dir);
           showControls();
         });
+
+        const { holds, marks } = stepTimelineMarkers(i);
+        holds.forEach((h) => {
+          const el = document.createElement('span');
+          el.className = 'progress-segment__hold';
+          el.style.left = h.leftPct + '%';
+          el.style.width = h.widthPct + '%';
+          b.appendChild(el);
+        });
+        marks.forEach((m) => {
+          const el = document.createElement('span');
+          el.className = 'progress-segment__marker';
+          el.style.left = m.leftPct + '%';
+          b.appendChild(el);
+        });
+        stepVoiceBeats(i).forEach((v) => {
+          const el = document.createElement('span');
+          el.className = 'progress-segment__beat';
+          el.style.left = v.leftPct + '%';
+          b.appendChild(el);
+        });
+
         $progress.appendChild(b);
       });
+      setupScrubDrag();
+    }
+
+    // Direct-manipulation scrubbing — drag anywhere across the track, not
+    // just click-per-step (per capturd design: "never a play-only preview").
+    let _scrubDragWired = false;
+    function setupScrubDrag() {
+      if (_scrubDragWired) return;
+      _scrubDragWired = true;
+      let scrubbing = false;
+
+      function segmentAt(clientX, clientY) {
+        const el = document.elementFromPoint(clientX, clientY);
+        return el && el.closest ? el.closest('.progress-segment') : null;
+      }
+      function jumpTo(seg) {
+        if (!seg) return;
+        const idx = Number(seg.dataset.index);
+        if (Number.isNaN(idx) || idx === STATE.index) return;
+        goToStep(idx, idx > STATE.index ? 1 : -1);
+      }
+
+      $progress.addEventListener('pointerdown', (ev) => {
+        scrubbing = true;
+        try { $progress.setPointerCapture(ev.pointerId); } catch (_) {}
+        jumpTo(segmentAt(ev.clientX, ev.clientY));
+        showControls();
+      });
+      $progress.addEventListener('pointermove', (ev) => {
+        if (!scrubbing) return;
+        jumpTo(segmentAt(ev.clientX, ev.clientY));
+        showControls();
+      });
+      function endScrub(ev) {
+        if (!scrubbing) return;
+        scrubbing = false;
+        try { $progress.releasePointerCapture(ev.pointerId); } catch (_) {}
+      }
+      $progress.addEventListener('pointerup', endScrub);
+      $progress.addEventListener('pointercancel', endScrub);
     }
 
     // ----------------------------------------------------------------
@@ -1562,12 +1693,12 @@
       // Hover halo just before the click, then a bright expanding ripple on it.
       if (preClick && tMs > clickAt - 340 && tMs < clickAt) {
         const hb = 1 + 0.12 * Math.sin(2 * Math.PI * ((tMs % 900) / 900));
-        $hotspotRing.style.stroke = '#4f8cff';
+        $hotspotRing.style.stroke = '#f2c230';
         $hotspotRing.style.transform = 'scale(' + (1.05 * hb) + ')';
         $hotspotRing.style.opacity = '0.45';
       } else if (tMs >= clickAt && tMs - clickAt < 520) {
         const rp = (tMs - clickAt) / 520;
-        $hotspotRing.style.stroke = '#4f8cff';
+        $hotspotRing.style.stroke = '#f2c230';
         $hotspotRing.style.transform = 'scale(' + (0.5 + rp * 2.1) + ')';
         $hotspotRing.style.opacity = String(Math.max(0, 0.95 * (1 - rp)));
       } else {

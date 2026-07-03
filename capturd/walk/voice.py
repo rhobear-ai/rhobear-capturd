@@ -67,33 +67,34 @@ class VoiceConfig:
 
 MIC_BUTTON_CSS = """
 #__demo-recorder-indicator__mic {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: none;
-  background: rgba(255,255,255,0.12);
-  color: #fff;
-  font-size: 16px;
+  background: rgba(151,183,196,0.12);
+  color: #e8eef2;
+  font-size: 13px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.18s ease, transform 0.12s ease;
+  transition: background 120ms cubic-bezier(0.2,0,0,1), transform 120ms cubic-bezier(0.2,0,0,1);
   flex-shrink: 0;
 }
 #__demo-recorder-indicator__mic:hover {
-  background: rgba(255,255,255,0.22);
+  background: rgba(151,183,196,0.22);
 }
 #__demo-recorder-indicator__mic.active {
-  background: #ff3b30;
+  background: #f2c230;
+  color: #1a1206;
   transform: scale(1.15);
-  box-shadow: 0 0 0 0 rgba(255,59,48,0.5);
+  box-shadow: 0 0 0 0 rgba(242,194,48,0.5);
   animation: __demoMicPulse 0.8s ease-out infinite;
 }
 @keyframes __demoMicPulse {
-  0% { box-shadow: 0 0 0 0 rgba(255,59,48,0.5); }
-  70% { box-shadow: 0 0 0 14px rgba(255,59,48,0); }
-  100% { box-shadow: 0 0 0 0 rgba(255,59,48,0); }
+  0% { box-shadow: 0 0 0 0 rgba(242,194,48,0.5); }
+  70% { box-shadow: 0 0 0 14px rgba(242,194,48,0); }
+  100% { box-shadow: 0 0 0 0 rgba(242,194,48,0); }
 }
 """
 
@@ -115,10 +116,23 @@ MIC_BUTTON_JS = r"""
     btn.title = 'Hold to talk';
     btn.setAttribute('aria-label', 'Push to talk');
 
+    function handleTranscript(transcript) {
+      // Belt-and-suspenders: recorder._append_voice also drives this HUD
+      // state (covers workflow/continuous voice paths); doing it here too
+      // means the button path updates with zero round-trip latency.
+      if (transcript) {
+        window.__demoHudSetHeard && window.__demoHudSetHeard(transcript);
+        window.__demoHudSetState && window.__demoHudSetState('acting');
+      } else {
+        window.__demoHudSetState && window.__demoHudSetState('idle');
+      }
+    }
+
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       e.stopPropagation();
       btn.classList.add('active');
+      window.__demoHudSetState && window.__demoHudSetState('listening');
       window.__demoMicStart();
     });
 
@@ -126,11 +140,10 @@ MIC_BUTTON_JS = r"""
       e.preventDefault();
       e.stopPropagation();
       btn.classList.remove('active');
+      window.__demoHudSetState && window.__demoHudSetState('transcribing');
       try {
         const transcript = await window.__demoMicStop();
-        if (transcript && typeof window.__demoOnVoiceTranscript === 'function') {
-          window.__demoOnVoiceTranscript(transcript);
-        }
+        handleTranscript(transcript);
       } catch (_) { /* bridge may have been torn down */ }
     });
 
@@ -138,18 +151,18 @@ MIC_BUTTON_JS = r"""
     btn.addEventListener('pointerleave', async (e) => {
       if (!btn.classList.contains('active')) return;
       btn.classList.remove('active');
+      window.__demoHudSetState && window.__demoHudSetState('transcribing');
       try {
         const transcript = await window.__demoMicStop();
-        if (transcript && typeof window.__demoOnVoiceTranscript === 'function') {
-          window.__demoOnVoiceTranscript(transcript);
-        }
+        handleTranscript(transcript);
       } catch (_) {}
     });
 
-    // Append to the recording badge.
-    const badge = document.getElementById(BADGE_ID);
-    if (badge) {
-      badge.appendChild(btn);
+    // Append into the HUD's row (beside the REC + voice-state pills).
+    const row = document.getElementById(BADGE_ID + '__row') || document.getElementById(BADGE_ID);
+    if (row) {
+      btn.className = '__demo-hud__mic';
+      row.appendChild(btn);
       // Inject the button stylesheet once.
       if (!document.getElementById(BADGE_ID + '__mic-styles')) {
         const style = document.createElement('style');
