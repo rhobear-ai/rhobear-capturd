@@ -51,7 +51,7 @@
     <!-- Required: internet access for fetching pages (shots mode) and TTS/downloads -->
     <Capability Name="internetClient" />
     <!-- Required: voice mode push-to-talk -->
-    <Capability Name="microphone" />
+    <DeviceCapability Name="microphone" />
   </Capabilities>
 
 </Package>
