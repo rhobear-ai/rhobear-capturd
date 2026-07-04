@@ -20,8 +20,10 @@ from pathlib import Path
 import PyInstaller.utils.hooks as hooks
 
 # ── paths ───────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).resolve().parent.parent   # repo root
-SPEC_DIR = Path(__file__).resolve().parent       # packaging/
+# NOTE: this file is exec'd by PyInstaller, not imported — __file__ is not
+# defined in that namespace. PyInstaller injects SPECPATH instead.
+SPEC_DIR = Path(SPECPATH).resolve()              # packaging/
+ROOT = SPEC_DIR.parent                            # repo root
 
 # ── hidden imports ──────────────────────────────────────────────────────────
 _hiddenimports = [
@@ -131,12 +133,22 @@ def _find_playwright_browsers():
             candidates.append(Path(val) / 'ms-playwright')
     candidates.append(Path.home() / '.cache' / 'ms-playwright')
 
+    exe_name = 'chrome.exe' if sys.platform == 'win32' else 'chrome'
+    # Playwright has nested the binary differently across releases
+    # (bare chromium-NNN/chrome.exe vs chromium-NNN/chrome-win64/chrome.exe).
+    # Check known layouts, then fall back to a shallow scan so a future
+    # rename doesn't silently drop the browser from the bundle again.
+    known_rel = (exe_name, f'chrome-win64/{exe_name}', f'chrome-win/{exe_name}',
+                 f'chrome-linux/{exe_name}', f'chrome-mac/{exe_name}')
+
     for base in candidates:
         chromium_matches = sorted(glob.glob(str(base / 'chromium-*')))
         if chromium_matches:
             latest = Path(chromium_matches[-1])
-            chrome_exe = latest / ('chrome.exe' if sys.platform == 'win32' else 'chrome')
-            if chrome_exe.is_file():
+            found = any((latest / rel).is_file() for rel in known_rel)
+            if not found:
+                found = next(latest.glob(f'*/{exe_name}'), None) is not None
+            if found:
                 yield latest  # Return the dir; caller walks it
                 break
 
