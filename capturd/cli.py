@@ -14,7 +14,7 @@ from __future__ import annotations
 import sys
 
 
-_HELP = """capturd — Captur'd by Sun Sponge
+_HELP = """capturd - Captur'd by Sun Sponge
 
   capturd shots ...    Rested-state bulk screenshots (settled, animation-free, full-page)
   capturd walk  ...    Agent-made interactive walkthroughs (record / stop / list / export / edit)

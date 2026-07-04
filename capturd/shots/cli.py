@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="capturd shots",
         description=(
-            "Rested-state website screenshot batch — settled, animation-free, "
+            "Rested-state website screenshot batch - settled, animation-free, "
             "full-page shots across viewports and color schemes. "
             "(Also invokable as `sunsponge-capture` for backwards compat.)"
         ),
