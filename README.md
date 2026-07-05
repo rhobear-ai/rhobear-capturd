@@ -5,10 +5,11 @@
 <h1 align="center">RHOBEAR Captur'd</h1>
 
 <p align="center">
-  <b>Post-work product capture. Stills and walkthroughs, made by an agent, not a human.</b><br>
-  You built the thing. Now show it. Point Captur'd at a URL and get either every rested-state
-  screenshot of it or a full agent-narrated walkthrough video — no clicking through, no manual
-  editing, no SaaS bill.
+  <b>Post-work product capture. Free screenshots of every page state — plus, on Pro,
+  agent-made AI walkthrough videos.</b><br>
+  You built the thing. Now show it. Point Captur'd at a URL and get every rested-state
+  screenshot of it — <b>free</b>, local, offline. Upgrade to <b>Pro</b> for a full
+  agent-narrated walkthrough video, powered by our own AI. No clicking through, no manual editing.
 </p>
 
 <p align="center">
@@ -22,8 +23,8 @@
 
 ## Two modes, one lane
 
-### `capturd shots` — rested-state screenshots, in bulk
-The original RHOBEAR Captur'd, unchanged. Most screenshot tools fire too early — mid-animation,
+### `capturd shots` — rested-state screenshots, in bulk &nbsp;·&nbsp; **free**
+The free core, unchanged. Most screenshot tools fire too early — mid-animation,
 before fonts load, while a carousel is sliding — and you get junk. Captur'd takes **rested** shots:
 animations disabled, fonts awaited, motion stopped, scroll reset, then every page × every viewport ×
 every color scheme, in one run.
@@ -33,8 +34,9 @@ every color scheme, in one run.
 - 🧘 **Deterministic** — same input, same pixels. Diff-friendly.
 - 📦 **Clean output** — `NNN-site-viewport-scheme.png` + `manifest.json`, ZIP or folder.
 
-### `capturd walk` — agent-made interactive walkthroughs
-The new mode. Prompt in, walkthrough out. Your agent (Plans, social manager, support, pi) says
+### `capturd walk` — agent-made AI walkthroughs &nbsp;·&nbsp; **Pro**
+The paid mode, powered by our own AI (piped through the RHOBEAR gateway — **no bring-your-own-key**).
+Unlock with `capturd activate <CODE>`. Prompt in, walkthrough out. Your agent (Plans, social manager, support, pi) says
 "make me a UX-flow video of this site" and Captur'd walks the site itself and produces:
 
 - **Interactive HTML viewer** (self-contained, zero deps, embeddable anywhere), plus
@@ -46,7 +48,8 @@ The new mode. Prompt in, walkthrough out. Your agent (Plans, social manager, sup
 
 Nothing else in the space is agent-made. Supademo / Arcade / Storylane all assume a human clicks
 through. Screen Studio has the cinematography but no interactivity and no agent surface. Captur'd
-does both, and it's yours, offline, MIT.
+does both. The walkthroughs run on **our own AI** and are the **Pro** tier — in the desktop app
+and the hosted web service alike. **Screenshots are always free.**
 
 ### `capturd serve` — MCP surface for both modes
 One MCP server exposes both modes to any RHOBEAR agent:
