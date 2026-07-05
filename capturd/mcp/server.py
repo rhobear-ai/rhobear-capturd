@@ -60,6 +60,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from capturd.pro import is_pro, checkout_url, PRO_CONFIG
 from capturd.walk.recorder import DemoRecorderError
 from capturd.walk.coordinator import (
     DemoForge,
@@ -70,6 +71,28 @@ from capturd.walk.coordinator import (
 )
 
 logger = logging.getLogger("capturd.mcp.server")
+
+
+def _pro_required_payload(feature: str = "AI walkthrough tools") -> dict[str, Any]:
+    """Structured paywall response returned by gated demo.* tools when Pro is inactive.
+
+    The ``capture.*`` namespace (rested screenshots) stays free; only the
+    AI-burning demo.* surface is gated — mirrors the CLI ``capturd walk`` gate.
+    """
+    return {
+        "ok": False,
+        "error": "pro_required",
+        "feature": feature,
+        "product": PRO_CONFIG["product_name"],
+        "price_label": PRO_CONFIG["price_label"],
+        "checkout_url": checkout_url(),
+        "message": (
+            f"{feature} are a {PRO_CONFIG['product_name']} feature "
+            f"({PRO_CONFIG['price_label']}). Screenshots (capture.*) stay free. "
+            "Upgrade via checkout_url, then `capturd activate <CODE>` to unlock "
+            "this MCP session."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +159,8 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError("url is required")
         if not name:
             raise ValueError("name is required")
+        if not is_pro():
+            return _pro_required_payload("demo.record (AI walkthroughs)")
         if mode not in ("agent", "human", "live"):
             raise ValueError(f"mode must be 'agent', 'live', or 'human', got {mode!r}")
         if mode == "agent" and not goal:
@@ -835,6 +860,8 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
     ) -> dict[str, Any]:
         if not demo_id:
             raise ValueError("demoId is required")
+        if not is_pro():
+            return _pro_required_payload("demo.stylize (AI re-render)")
         valid = {"snappy", "smooth", "professional", "cinematic"}
         if style not in valid:
             raise ValueError(f"style must be one of {sorted(valid)}, got {style!r}")
@@ -868,6 +895,8 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError("stepIndex must be a non-negative integer")
         if not isinstance(aspects, list) or not aspects:
             raise ValueError("aspects must be a non-empty list")
+        if not is_pro():
+            return _pro_required_payload("demo.regenerate (AI re-render)")
         try:
             result = await forge.regenerate_step(demo_id, step_index, aspects)
         except DemoNotFound:

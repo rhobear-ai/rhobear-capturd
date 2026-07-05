@@ -50,10 +50,23 @@ PRO_PRICE = _env("CAPTURD_PRO_PRICE", "$19")
 # ---- OWNER-GATED credentials (honest flags) ----------------------------------
 GOOGLE_CLIENT_ID = _env("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = _env("GOOGLE_CLIENT_SECRET")
-PRO_CHECKOUT_URL = _env("PRO_CHECKOUT_URL")           # buy button target
+
+# Billing — two paths. The CANON path (Lane K) creates a Stripe Checkout Session
+# server-side so the founder coupon auto-applies. The legacy path redirects to a
+# static PRO_CHECKOUT_URL (Payment Link). Session-creation wins when configured.
+STRIPE_SECRET_KEY = _env("STRIPE_SECRET_KEY")             # test: sk_test_...  (NEVER commit)
+CAPTURD_PRICE_ID = _env("CAPTURD_PRICE_ID")               # price for lookup_key rhobear_capturd_pro
+CAPTURD_COUPON_ID = _env("CAPTURD_COUPON_ID", "rhobear_capturd_founders_25")
+PRO_CHECKOUT_URL = _env("PRO_CHECKOUT_URL")               # legacy: static buy link
 BILLING_WEBHOOK_SECRET = _env("BILLING_WEBHOOK_SECRET")
+
 GW_API_KEY = _env("RHOBEAR_GW_API_KEY")               # optional: agent self-drive
 DEV_LOGIN = _env("CAPTURD_DEV_LOGIN", "1") == "1"     # allow dev login until OAuth is wired
+
+# Billing is "configured" if EITHER checkout path is usable. The session-creation
+# path (canon) needs the secret key + price id; legacy needs a static URL.
+_BILLING_SESSION_READY = bool(STRIPE_SECRET_KEY and CAPTURD_PRICE_ID)
+_BILLING_LEGACY_READY = bool(PRO_CHECKOUT_URL)
 
 # Enterprise self-host: this whole service IS the enterprise edition when run on
 # the customer's own box. No separate build — same code, self-hosted.
@@ -64,7 +77,8 @@ def status() -> dict:
     """Honest readiness — what's wired vs what waits on the owner's credentials."""
     return {
         "oauth_configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
-        "billing_configured": bool(PRO_CHECKOUT_URL),
+        "billing_configured": bool(_BILLING_SESSION_READY or _BILLING_LEGACY_READY),
+        "billing_session_creation": _BILLING_SESSION_READY,
         "webhook_configured": bool(BILLING_WEBHOOK_SECRET),
         "gateway_configured": bool(GW_API_KEY),
         "dev_login": DEV_LOGIN,
