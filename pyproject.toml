@@ -45,9 +45,9 @@ capturd = "capturd.cli:main"
 sunsponge-capture = "capturd.shots.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/deariencampbell1-sys/sunsponge-capture"
-Source = "https://github.com/deariencampbell1-sys/sunsponge-capture"
-Issues = "https://github.com/deariencampbell1-sys/sunsponge-capture/issues"
+Homepage = "https://github.com/rhobear-ai/rhobear-capturd"
+Source = "https://github.com/rhobear-ai/rhobear-capturd"
+Issues = "https://github.com/rhobear-ai/rhobear-capturd/issues"
 
 [tool.setuptools]
 packages = ["capturd", "capturd.shots", "capturd.walk", "capturd.mcp"]

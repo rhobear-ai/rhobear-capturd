@@ -65,7 +65,7 @@ Editing is the API. The agent IS the editor. No GUI editor as v1.
 ## Install
 
 ```bash
-git clone https://github.com/deariencampbell1-sys/sunsponge-capture
+git clone https://github.com/rhobear-ai/rhobear-capturd
 cd sunsponge-capture
 pip install -e .
 python -m playwright install chromium
