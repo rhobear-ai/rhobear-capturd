@@ -18,3 +18,13 @@ demos/
 e2e-run/
 live-run/
 taste-run/
+
+# hosted service runtime
+service/data/
+service/*.log
+service/**/__pycache__/
+
+# build + demo artifacts (never product)
+*.egg-info/
+taste-run/
+.claude/

@@ -1,0 +1,19 @@
+[Unit]
+Description=Captur'd hosted service (API + render worker)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/capturd-service
+EnvironmentFile=/opt/capturd-service/.env
+Environment=CAPTURD_REPO=/opt/sunsponge-capture
+ExecStart=/opt/capturd-service/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8099
+Restart=always
+RestartSec=3
+# render jobs are CPU-heavy; give them room but keep the box alive
+CPUWeight=80
+MemoryHigh=6G
+
+[Install]
+WantedBy=multi-user.target
