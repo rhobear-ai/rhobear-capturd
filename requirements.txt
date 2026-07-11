@@ -1,1 +1,2 @@
 playwright>=1.40
+httpx>=0.27    # Vertex HD TTS backend (tts_vertex)

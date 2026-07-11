@@ -130,6 +130,15 @@ def get_job(job_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def list_jobs(uid: str, limit: int = 30) -> list[dict]:
+    """A user's recent jobs, newest first — powers the studio gallery."""
+    with _db() as c:
+        rows = c.execute(
+            "SELECT * FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
 def add_usage(uid: str, kind: str, n: int = 1) -> None:
     with _db() as c:
         c.execute("INSERT INTO usage(user_id,kind,n,at) VALUES(?,?,?,?)",

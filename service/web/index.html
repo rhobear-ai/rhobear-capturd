@@ -2,105 +2,326 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Captur'd — agent-made demo videos</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RHOBEAR Captur'd — Studio</title>
+<meta name="description" content="Your app, filmed by an agent — human typing, tight zooms, HD voiceover. The Captur'd studio.">
+<link rel="icon" type="image/png" href="/assets/capturd-bear.png">
+<script>
+  // Device-explicit surfaces: phones get the purpose-built mobile studio.
+  (function () {
+    try {
+      if (new URLSearchParams(location.search).get('surface') === 'desktop') return;
+      if (!matchMedia('(pointer: coarse)').matches) return;
+      if (Math.min(screen.width, screen.height) < 600) { location.replace('/m' + location.search); return; }
+      // touch tablet → the explicit tablet ergonomics of this studio
+      document.documentElement.dataset.surface = 'tablet';
+    } catch (_e) { /* stay */ }
+  })();
+</script>
 <style>
-  :root{ --bg:#0b0d10; --panel:#14171c; --line:#232830; --ink:#eef1f5; --dim:#9aa4b2;
-         --gold:#f2c230; --blue:#4f8cff; --ok:#3bd6c3; --danger:#ff6b6b; }
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);
-    font:15px/1.5 ui-sans-serif,system-ui,'Segoe UI',sans-serif}
-  a{color:var(--blue)} .wrap{max-width:860px;margin:0 auto;padding:28px 20px}
-  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:26px}
-  .brand{font-weight:700;letter-spacing:.2px} .brand b{color:var(--gold)}
-  .sub{color:var(--dim);font-size:12px}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin:14px 0}
-  h1{font-size:26px;margin:.2em 0} h2{font-size:16px;margin:0 0 12px}
-  label{display:block;font-size:12px;color:var(--dim);margin:12px 0 4px}
-  input,select{width:100%;background:#0e1116;border:1px solid var(--line);color:var(--ink);
-    border-radius:9px;padding:10px 12px;font-size:14px}
-  .row{display:flex;gap:12px;flex-wrap:wrap} .row>div{flex:1;min-width:150px}
-  button{background:var(--blue);color:#08111f;border:0;border-radius:9px;padding:11px 16px;
-    font-weight:700;cursor:pointer;font-size:14px} button.ghost{background:#1b1f26;color:var(--ink);border:1px solid var(--line)}
-  button.gold{background:var(--gold);color:#241d00} button:disabled{opacity:.5;cursor:not-allowed}
-  .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
-  .pill.pro{color:#241d00;background:var(--gold);border-color:var(--gold)}
-  .meter{height:8px;background:#0e1116;border-radius:999px;overflow:hidden;border:1px solid var(--line)}
-  .meter>i{display:block;height:100%;background:var(--blue)}
-  .note{font-size:12px;color:var(--dim)} .warn{color:var(--gold)} .err{color:var(--danger)}
-  video{width:100%;border-radius:10px;margin-top:10px;background:#000}
-  .hide{display:none} .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);
-    background:#1b1f26;border:1px solid var(--line);padding:10px 16px;border-radius:10px;font-size:13px}
+  :root{
+    --bg:#120c02; --bg-2:#1a1305; --bg-3:#211808;
+    --panel:rgba(255,255,255,0.03); --panel-hi:rgba(255,255,255,0.055);
+    --border:rgba(255,255,255,0.07); --border-hi:rgba(255,125,31,0.28);
+    --glass:rgba(26,19,5,0.72); --glass-bd:rgba(255,255,255,0.10); --glass-hi:rgba(255,255,255,0.16);
+    --text:#f6efe2; --text-2:#b8a98f; --text-dim:#7d6e52;
+    --amber:#ff7d1f; --amber-hi:#ffa24d; --amber-2:#ffc24d; --amber-glow:rgba(255,125,31,0.35);
+    --ok:#4ade80; --err:#f87171;
+    --ease:cubic-bezier(0.2,0,0,1);
+    --sans:-apple-system,'SF Pro Text','Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;
+    --serif:'New York','Iowan Old Style',Charter,Georgia,serif;
+    --mono:ui-monospace,'SF Mono','Cascadia Code',Consolas,monospace;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px -6px rgba(0,0,0,.4);
+    --shadow-lg:0 24px 60px -18px rgba(0,0,0,.65),0 2px 8px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--text);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased;min-height:100dvh}
+  a{color:var(--amber);text-decoration:none} a:hover{color:var(--amber-hi)}
+  ::selection{background:var(--amber);color:#1a1300}
+  button{font-family:var(--sans)}
+
+  .icn{width:17px;height:17px;display:block;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ── chrome ── */
+  .top{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:12px;
+    padding:10px 22px;background:linear-gradient(180deg,var(--bg-2),rgba(26,19,5,.85));
+    backdrop-filter:blur(18px);border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.01em}
+  .brand img{width:34px;height:34px;filter:drop-shadow(0 0 8px rgba(79,140,255,.5))}
+  .brand small{display:block;font-weight:600;font-size:.62rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim)}
+  .top .spacer{flex:1}
+  .pill{font-size:.66rem;font-family:var(--mono);padding:3px 10px;border-radius:999px;
+    border:1px solid var(--border);color:var(--text-2);background:var(--panel)}
+  .pill.pro{color:#1a1300;background:linear-gradient(135deg,var(--amber),var(--amber-2));border-color:transparent;font-weight:700}
+  .btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--border);background:var(--panel-hi);
+    color:var(--text);font-size:.8rem;font-weight:600;padding:9px 14px;border-radius:10px;cursor:pointer;
+    transition:background .12s var(--ease),border-color .12s var(--ease),transform .12s var(--ease)}
+  .btn:hover{background:rgba(255,255,255,.09)}
+  .btn:active{transform:translateY(1px)}
+  .btn--primary{color:#1a1300;border:none;background:linear-gradient(135deg,var(--amber),var(--amber-2));
+    box-shadow:0 8px 24px -10px var(--amber-glow)}
+  .btn--primary:hover{filter:brightness(1.07);background:linear-gradient(135deg,var(--amber),var(--amber-2))}
+  .btn--ghost{background:transparent;border-color:transparent;color:var(--text-2)}
+  .btn--ghost:hover{color:var(--text);background:var(--panel)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+
+  .wrap{max-width:1060px;margin:0 auto;padding:30px 22px 90px}
+
+  /* ── signed-out hero ── */
+  .hero{max-width:520px;margin:9vh auto 0;text-align:center}
+  .hero img{width:110px;filter:drop-shadow(0 14px 44px rgba(79,140,255,.45))}
+  .hero h1{font-family:var(--serif);font-size:2.1rem;font-weight:600;letter-spacing:-.02em;margin:18px 0 10px}
+  .hero p{color:var(--text-2);margin-bottom:26px}
+  .card{background:linear-gradient(180deg,var(--panel-hi),var(--panel));border:1px solid var(--border);
+    border-radius:20px;padding:22px;box-shadow:var(--shadow)}
+  .hero .card{text-align:left}
+  label{display:block;font-size:.72rem;font-weight:600;color:var(--text-2);margin:0 0 6px;letter-spacing:.03em}
+  input[type=email],input[type=url],input[type=text],select{width:100%;background:rgba(0,0,0,.3);
+    border:1px solid var(--border);color:var(--text);border-radius:11px;padding:11px 13px;font-size:.9rem;font-family:var(--sans)}
+  input:focus,select:focus{outline:none;border-color:var(--border-hi);box-shadow:0 0 0 3px rgba(255,125,31,.12)}
+  .note{font-size:.76rem;color:var(--text-dim)} .warn{color:var(--amber-2)} .err{color:var(--err)}
+
+  /* ── studio layout ── */
+  .studio{display:none}
+  .studio.on{display:block}
+  .signedout{display:none}
+  .signedout.on{display:block}
+  h2{font-family:var(--serif);font-weight:600;font-size:1.25rem;letter-spacing:-.01em;margin-bottom:14px}
+  h2 .sub{display:block;font-family:var(--sans);font-size:.76rem;font-weight:500;color:var(--text-dim);margin-top:2px}
+
+  /* director console */
+  .console{padding:26px}
+  .console .row{display:grid;grid-template-columns:1fr;gap:16px}
+
+  /* the glass "tell the director" bar — the ecosystem chat surface */
+  .ask{position:relative;border-radius:18px;margin-top:14px;
+    background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));
+    border:1px solid var(--glass-bd);
+    box-shadow:inset 0 1px 0 var(--glass-hi),0 8px 24px -12px rgba(0,0,0,.5);
+    padding:12px 12px 10px;transition:border-color .14s var(--ease),box-shadow .14s var(--ease)}
+  .ask:focus-within{border-color:var(--border-hi);box-shadow:inset 0 1px 0 var(--glass-hi),0 8px 28px -10px var(--amber-glow)}
+  .ask textarea{width:100%;background:transparent;border:none;resize:none;color:var(--text);
+    font:.92rem/1.5 var(--sans);padding:0 2px 8px;min-height:44px}
+  .ask textarea:focus{outline:none}
+  .ask textarea::placeholder{color:var(--text-dim)}
+  .ask .row2{display:flex;align-items:center;gap:8px}
+  .ask .hintchip{font-size:.68rem;color:var(--text-dim);border:1px solid var(--border);border-radius:999px;
+    padding:3px 10px;cursor:pointer;background:transparent;transition:color .12s,border-color .12s}
+  .ask .hintchip:hover{color:var(--amber);border-color:var(--border-hi)}
+  .ask .sp{flex:1}
+  .wave{display:flex;align-items:center;gap:2.5px;height:16px;color:var(--text-dim)}
+  .wave i{width:2px;border-radius:2px;background:currentColor;height:var(--h,6px)}
+  .wave i:nth-child(1){--h:5px}.wave i:nth-child(2){--h:9px}.wave i:nth-child(3){--h:14px}
+  .wave i:nth-child(4){--h:8px}.wave i:nth-child(5){--h:11px}.wave i:nth-child(6){--h:5px}.wave i:nth-child(7){--h:8px}
+  .ask.busy .wave{color:var(--amber)}
+  .ask.busy .wave i{animation:wv .9s ease-in-out infinite;animation-delay:calc(var(--i,0)*90ms)}
+  @keyframes wv{50%{transform:scaleY(1.9)}}
+
+  /* template cards */
+  .tpls{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+  .tpl{position:relative;border:1px solid var(--border);border-radius:14px;background:var(--bg-2);
+    padding:14px;cursor:pointer;text-align:left;transition:border-color .14s var(--ease),transform .14s var(--ease),box-shadow .14s var(--ease)}
+  .tpl:hover{transform:translateY(-2px);border-color:var(--border-hi)}
+  .tpl.sel{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber),0 12px 30px -14px var(--amber-glow)}
+  .tpl .icn{width:20px;height:20px;color:var(--amber);margin-bottom:8px}
+  .tpl b{display:block;font-size:.82rem;color:var(--text)}
+  .tpl span{display:block;font-size:.7rem;color:var(--text-dim);margin-top:2px}
+
+  /* voice + aspect row */
+  .opts{display:grid;grid-template-columns:1.4fr 1fr;gap:12px;margin-top:16px}
+  .seg{display:inline-flex;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;padding:3px}
+  .seg button{border:none;background:transparent;color:var(--text-2);font-size:.76rem;font-weight:600;
+    padding:7px 14px;border-radius:999px;cursor:pointer;transition:color .12s,background .12s}
+  .seg button.sel{color:#1a1300;background:linear-gradient(135deg,var(--amber),var(--amber-2))}
+  .voicegrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}
+  .voice{border:1px solid var(--border);border-radius:11px;background:var(--bg-2);padding:9px 11px;cursor:pointer;
+    text-align:left;transition:border-color .12s}
+  .voice:hover{border-color:var(--border-hi)}
+  .voice.sel{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber)}
+  .voice b{display:block;font-size:.76rem;color:var(--text)}
+  .voice span{font-size:.64rem;color:var(--text-dim)}
+  .voice .hd{float:right;font-size:.56rem;font-family:var(--mono);color:#1a1300;background:linear-gradient(135deg,var(--amber),var(--amber-2));
+    border-radius:999px;padding:1px 6px;font-weight:700}
+
+  .film{display:flex;align-items:center;gap:14px;margin-top:20px}
+  .film .btn--primary{font-size:.9rem;padding:13px 26px;border-radius:13px}
+  .state{font-size:.8rem;color:var(--text-2)}
+
+  /* progress + result */
+  .result{margin-top:18px;display:none}
+  .result.on{display:block}
+  .result video{width:100%;border-radius:14px;background:#000;border:1px solid var(--border)}
+  .prog{display:none;align-items:center;gap:12px;margin-top:18px;padding:14px 16px;border-radius:14px;
+    background:var(--panel);border:1px solid var(--border)}
+  .prog.on{display:flex}
+  .prog .dots{display:flex;gap:5px}
+  .prog .dots i{width:7px;height:7px;border-radius:50%;background:var(--amber);animation:pd 1.2s ease-in-out infinite}
+  .prog .dots i:nth-child(2){animation-delay:.18s}.prog .dots i:nth-child(3){animation-delay:.36s}
+  @keyframes pd{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}
+
+  /* gallery */
+  .gal{margin-top:34px}
+  .galgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .galitem{border:1px solid var(--border);border-radius:14px;background:var(--bg-2);overflow:hidden}
+  .galitem video{width:100%;aspect-ratio:16/9;background:#000;display:block}
+  .galitem .meta{display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:.72rem;color:var(--text-2)}
+  .galitem .meta .st{margin-left:auto;font-family:var(--mono);font-size:.62rem}
+  .st.done{color:var(--ok)} .st.failed,.st.capped{color:var(--err)} .st.running,.st.queued{color:var(--amber-2)}
+  .galempty{color:var(--text-dim);font-size:.82rem;padding:22px;border:1px dashed var(--border);border-radius:14px;text-align:center}
+
+  /* plan */
+  .plan{margin-top:34px;padding:22px}
+  .meter{height:8px;background:rgba(0,0,0,.35);border-radius:999px;overflow:hidden;border:1px solid var(--border);margin-top:8px}
+  .meter i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--amber-2))}
+  .planrow{display:flex;align-items:center;gap:18px}
+  .planrow>div:first-child{flex:1}
+
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:60;
+    background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--glass-bd);
+    padding:10px 18px;border-radius:12px;font-size:.8rem;box-shadow:var(--shadow-lg)}
+  #acct{display:flex;align-items:center;gap:10px}
+  .hide{display:none !important}
+
+  @media (max-width: 900px){
+    .tpls{grid-template-columns:repeat(2,1fr)}
+    .voicegrid{grid-template-columns:repeat(2,1fr)}
+    .galgrid{grid-template-columns:repeat(2,1fr)}
+    .opts{grid-template-columns:1fr}
+  }
+
+  /* explicit TABLET ergonomics (set by reach detection, not width guessing) */
+  :root[data-surface="tablet"] .btn{min-height:46px}
+  :root[data-surface="tablet"] .tpl{padding:16px}
+  :root[data-surface="tablet"] .voice{padding:12px 13px}
+  :root[data-surface="tablet"] .seg button{padding:10px 18px}
+  :root[data-surface="tablet"] input,
+  :root[data-surface="tablet"] select{padding:13px 14px}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div><div class="brand">Captur<b>'</b>d </div></div>
-    <div id="acct" class="hide"><span class="pill" id="planPill">free</span>
-      <span class="note" id="acctEmail"></span>
-      <button class="ghost" id="signout" style="margin-left:8px">Sign out</button></div>
-  </header>
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><line x1="7.5" y1="4.5" x2="7.5" y2="19.5"/><line x1="16.5" y1="4.5" x2="16.5" y2="19.5"/><line x1="3" y1="9.5" x2="7.5" y2="9.5"/><line x1="3" y1="14.5" x2="7.5" y2="14.5"/><line x1="16.5" y1="9.5" x2="21" y2="9.5"/><line x1="16.5" y1="14.5" x2="21" y2="14.5"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2.5 4.5 13.5H11L9.5 21.5 19 10.5h-6.5L13 2.5Z"/></symbol>
+  <symbol id="i-spot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21V5.5Z"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20"/></symbol>
+  <symbol id="i-social" viewBox="0 0 24 24"><rect x="7" y="2.8" width="10" height="18.4" rx="2.5"/><path d="m14 8-4 4h4l-4 4"/></symbol>
+  <symbol id="i-login" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="11" r="2"/><path d="M6 16.5c.8-1.7 5.2-1.7 6 0"/><line x1="14.5" y1="9.5" x2="18" y2="9.5"/><line x1="14.5" y1="13" x2="18" y2="13"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><line x1="12" y1="19.5" x2="12" y2="5"/><path d="m6 10.5 6-6 6 6"/></symbol>
+</svg>
 
+<header class="top">
+  <div class="brand"><img src="/assets/capturd-bear.png" alt="">
+    <span>RHOBEAR Captur'd<small>your app, filmed by an agent</small></span></div>
+  <span class="spacer"></span>
+  <div id="acct" class="hide">
+    <span class="pill" id="planPill">free</span>
+    <span class="note" id="acctEmail"></span>
+    <button class="btn btn--ghost" id="signout">Sign out</button>
+  </div>
+</header>
+
+<div class="wrap">
   <!-- SIGNED OUT -->
-  <section id="signedOut" class="hide">
-    <div class="panel">
+  <section id="signedOut" class="signedout">
+    <div class="hero">
+      <img src="/assets/capturd-bear.png" alt="">
       <h1>Your app, filmed by an agent.</h1>
-      <p class="note">Give us a URL. We film a demo walkthrough — human typing, tight zooms,
-        voiceover — no directing. First one's free.</p>
-      <label>Email</label>
-      <input id="email" type="email" placeholder="you@company.com" autocomplete="email">
-      <div style="height:12px"></div>
-      <div class="row">
-        <div><button id="continueBtn" style="width:100%">Continue</button></div>
-        <div id="googleWrap" class="hide"><button class="ghost" id="googleBtn" style="width:100%">Continue with Google</button></div>
+      <p>Give it a URL. The crew films a demo walkthrough — human typing, tight zooms, HD voiceover — no directing required. First one's free.</p>
+      <div class="card">
+        <label>Email</label>
+        <input id="email" type="email" placeholder="you@company.com" autocomplete="email">
+        <div style="height:12px"></div>
+        <div style="display:flex;gap:10px">
+          <button id="continueBtn" class="btn btn--primary" style="flex:1;justify-content:center">Continue</button>
+          <button class="btn hide" id="googleBtn" style="flex:1;justify-content:center">Continue with Google</button>
+        </div>
+        <p class="note" id="devNote" style="margin-top:12px"></p>
       </div>
-      <p class="note" id="devNote" style="margin-top:12px"></p>
     </div>
   </section>
 
-  <!-- DASHBOARD -->
-  <section id="dash" class="hide">
-    <div class="panel">
-      <h2>Film a demo</h2>
-      <label>Product URL</label>
-      <input id="url" type="url" placeholder="https://yourapp.com">
+  <!-- STUDIO -->
+  <section id="dash" class="studio">
+    <div class="card console">
+      <h2>Film a demo<span class="sub">point the crew at your product — the director takes it from there</span></h2>
       <div class="row">
-        <div><label>Look</label>
-          <select id="template">
-            <option value="saas-walkthrough">SaaS walkthrough</option>
-            <option value="ux-showcase">UX showcase (hype)</option>
-            <option value="feature-spotlight">Feature spotlight</option>
-            <option value="tutorial-longform">Tutorial</option>
-            <option value="social-teaser">Social teaser</option>
-            <option value="login-flow">Login / signup</option>
-          </select></div>
-        <div><label>Aspect</label>
-          <select id="aspect"><option value="16:9">16:9</option><option value="9:16">9:16 (social)</option><option value="1:1">1:1</option></select></div>
-        <div><label>Voice</label>
-          <select id="voice">
-            <option value="">Default (Aria)</option>
-            <option value="en-US-GuyNeural">Guy (US male)</option>
-            <option value="en-GB-SoniaNeural">Sonia (UK female)</option>
-            <option value="en-GB-RyanNeural">Ryan (UK male)</option>
-          </select></div>
+        <div>
+          <label>Product URL</label>
+          <input id="url" type="url" placeholder="https://yourapp.com">
+        </div>
       </div>
-      <div style="height:14px"></div>
-      <button id="filmBtn">Film it</button>
-      <span id="genState" class="note" style="margin-left:10px"></span>
-      <div id="result" class="hide"><video id="video" controls></video></div>
+
+      <!-- the director brief — ecosystem glass bar -->
+      <div class="ask" id="ask">
+        <textarea id="brief" rows="2" placeholder="Tell the director what to film… (your words become the demo's opening line)"></textarea>
+        <div class="row2">
+          <button type="button" class="hintchip" data-hint="Show how easy onboarding is — end on the dashboard.">onboarding</button>
+          <button type="button" class="hintchip" data-hint="Spotlight the analytics page and make the charts the hero.">analytics</button>
+          <button type="button" class="hintchip" data-hint="A fast hype cut for social — energy, zooms, bold lines.">hype cut</button>
+          <span class="sp"></span>
+          <span class="wave" aria-hidden="true"><i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i><i style="--i:4"></i><i style="--i:5"></i><i style="--i:6"></i></span>
+        </div>
+      </div>
+
+      <div class="tpls" id="tpls">
+        <button class="tpl sel" data-tpl="saas-walkthrough"><svg class="icn"><use href="#i-film"/></svg><b>SaaS walkthrough</b><span>the classic tour — snappy camera</span></button>
+        <button class="tpl" data-tpl="ux-showcase"><svg class="icn"><use href="#i-zap"/></svg><b>UX showcase</b><span>cinematic hype for a launch</span></button>
+        <button class="tpl" data-tpl="feature-spotlight"><svg class="icn"><use href="#i-spot"/></svg><b>Feature spotlight</b><span>one feature, smooth + close</span></button>
+        <button class="tpl" data-tpl="tutorial-longform"><svg class="icn"><use href="#i-book"/></svg><b>Tutorial</b><span>professional, patient pacing</span></button>
+        <button class="tpl" data-tpl="social-teaser"><svg class="icn"><use href="#i-social"/></svg><b>Social teaser</b><span>vertical-ready, quick cuts</span></button>
+        <button class="tpl" data-tpl="login-flow"><svg class="icn"><use href="#i-login"/></svg><b>Login / signup</b><span>the first-run flow, typed live</span></button>
+      </div>
+
+      <div class="opts">
+        <div>
+          <label>Voice — HD house voices or classic</label>
+          <div class="voicegrid" id="voices">
+            <button class="voice sel" data-voice="vertex:Charon:warm"><span class="hd">HD</span><b>Charon</b><span>deep · warm expert</span></button>
+            <button class="voice" data-voice="vertex:Kore:warm"><span class="hd">HD</span><b>Kore</b><span>firm · confident</span></button>
+            <button class="voice" data-voice="vertex:Aoede:warm"><span class="hd">HD</span><b>Aoede</b><span>breezy · friendly</span></button>
+            <button class="voice" data-voice="vertex:Fenrir:trailer"><span class="hd">HD</span><b>Fenrir</b><span>trailer energy</span></button>
+            <button class="voice" data-voice="vertex:Zephyr:warm"><span class="hd">HD</span><b>Zephyr</b><span>bright · upbeat</span></button>
+            <button class="voice" data-voice=""><b>Aria</b><span>classic (no HD)</span></button>
+          </div>
+        </div>
+        <div>
+          <label>Aspect</label>
+          <div class="seg" id="aspect">
+            <button class="sel" data-aspect="16:9">16:9</button>
+            <button data-aspect="9:16">9:16</button>
+            <button data-aspect="1:1">1:1</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="film">
+        <button id="filmBtn" class="btn btn--primary"><svg class="icn"><use href="#i-film"/></svg>Film it</button>
+        <span id="genState" class="state"></span>
+      </div>
+
+      <div class="prog" id="prog"><span class="dots"><i></i><i></i><i></i></span><span id="progText">The film crew is on set…</span></div>
+      <div class="result" id="result"><video id="video" controls></video></div>
     </div>
 
-    <div class="panel">
-      <h2>Your plan</h2>
-      <div class="row" style="align-items:center">
+    <!-- gallery -->
+    <div class="gal">
+      <h2>Your demos<span class="sub">everything the crew has filmed for you</span></h2>
+      <div class="galgrid" id="galgrid"></div>
+      <div class="galempty hide" id="galempty">Nothing filmed yet — your first demo lands here.</div>
+    </div>
+
+    <!-- plan -->
+    <div class="card plan">
+      <div class="planrow">
         <div>
           <div class="note" id="usageLabel"></div>
-          <div class="meter" style="margin-top:6px"><i id="usageBar" style="width:0%"></i></div>
+          <div class="meter"><i id="usageBar" style="width:0%"></i></div>
+          <p class="note" id="billingNote" style="margin-top:10px"></p>
+          <p class="note hide" id="mcpNote"></p>
         </div>
-        <div style="flex:0 0 auto"><button class="gold" id="upgrade">Upgrade to Pro</button></div>
+        <button class="btn btn--primary" id="upgrade">Upgrade to Pro</button>
       </div>
-      <p class="note" id="billingNote" style="margin-top:10px"></p>
-      <p class="note" id="mcpNote" class="hide"></p>
     </div>
   </section>
 </div>
@@ -110,30 +331,70 @@
 const $ = s => document.querySelector(s);
 const toast = m => { const t=$('#toast'); t.textContent=m; t.classList.remove('hide');
   clearTimeout(window._t); window._t=setTimeout(()=>t.classList.add('hide'),3200); };
-async function api(path, opts){ const r = await fetch(path, opts); return r; }
+const api = (path, opts) => fetch(path, opts);
 
 let ME = null;
+let TPL = 'saas-walkthrough', ASPECT = '16:9', VOICE = 'vertex:Charon:warm';
+
+$('#tpls').addEventListener('click', e => {
+  const b = e.target.closest('.tpl'); if(!b) return;
+  document.querySelectorAll('.tpl').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel'); TPL = b.dataset.tpl;
+});
+$('#aspect').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  document.querySelectorAll('#aspect button').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel'); ASPECT = b.dataset.aspect;
+});
+$('#voices').addEventListener('click', e => {
+  const b = e.target.closest('.voice'); if(!b) return;
+  document.querySelectorAll('.voice').forEach(x=>x.classList.remove('sel'));
+  b.classList.add('sel'); VOICE = b.dataset.voice;
+});
+document.querySelectorAll('.hintchip').forEach(c => c.addEventListener('click', () => {
+  $('#brief').value = c.dataset.hint; $('#brief').focus();
+}));
+
 async function refresh(){
   const r = await api('/api/me'); ME = await r.json();
   if(!ME.signed_in){
-    $('#signedOut').classList.remove('hide'); $('#dash').classList.add('hide'); $('#acct').classList.add('hide');
-    if(ME.config.oauth_configured){ $('#googleWrap').classList.remove('hide'); $('#devNote').textContent=''; }
-    else { $('#devNote').innerHTML = ME.config.dev_login ? 'Google sign-in goes live once the owner’s OAuth client is wired — use email to continue now.' : ''; }
+    $('#signedOut').classList.add('on'); $('#dash').classList.remove('on'); $('#acct').classList.add('hide');
+    if(ME.config.oauth_configured){ $('#googleBtn').classList.remove('hide'); }
+    else if(ME.config.dev_login){ $('#devNote').textContent = 'Google sign-in goes live once OAuth is wired — use email to continue now.'; }
     return;
   }
-  $('#signedOut').classList.add('hide'); $('#dash').classList.remove('hide'); $('#acct').classList.remove('hide');
+  $('#signedOut').classList.remove('on'); $('#dash').classList.add('on'); $('#acct').classList.remove('hide');
   $('#acctEmail').textContent = ME.email;
   const pp = $('#planPill'); pp.textContent = ME.plan; pp.className = 'pill' + (ME.plan==='pro'?' pro':'');
   const u = ME.usage;
-  if(ME.plan==='pro'){ $('#usageLabel').textContent = `Pro — unlimited generations (${u.generations} made)`;
+  if(ME.plan==='pro'){ $('#usageLabel').textContent = `Pro — unlimited demos (${u.generations} filmed)`;
     $('#usageBar').style.width='100%'; $('#upgrade').classList.add('hide'); }
-  else { $('#usageLabel').textContent = `${u.generations} / ${u.free_limit} free generation used`;
+  else { $('#usageLabel').textContent = `${u.generations} / ${u.free_limit} free demo used`;
     $('#usageBar').style.width = Math.min(100, 100*u.generations/Math.max(1,u.free_limit))+'%';
     $('#upgrade').classList.remove('hide'); }
   $('#billingNote').innerHTML = ME.config.billing_configured
-    ? 'Pro is '+ME.pro_price+'/mo — unlimited generations, history, MCP endpoint.'
-    : '<span class="warn">Checkout goes live once the owner’s payment credentials are in.</span> Pro will be '+ME.pro_price+'/mo.';
+    ? 'Pro is '+ME.pro_price+'/mo — unlimited demos, HD voices, history, MCP endpoint.'
+    : '<span class="warn">Checkout goes live shortly.</span> Pro will be '+ME.pro_price+'/mo — unlimited demos, HD voices, history, MCP endpoint.';
   if(ME.mcp_endpoint){ const m=$('#mcpNote'); m.classList.remove('hide'); m.textContent='Your MCP endpoint: '+ME.mcp_endpoint; }
+  loadGallery();
+}
+
+async function loadGallery(){
+  try{
+    const r = await api('/api/jobs'); if(!r.ok) return;
+    const {jobs} = await r.json();
+    const g = $('#galgrid'); g.innerHTML = '';
+    if(!jobs.length){ $('#galempty').classList.remove('hide'); return; }
+    $('#galempty').classList.add('hide');
+    for(const j of jobs){
+      const d = document.createElement('div'); d.className = 'galitem';
+      const when = new Date((j.created_at||0)*1000).toLocaleDateString();
+      d.innerHTML = (j.has_video && j.status==='done'
+          ? `<video src="/api/jobs/${j.job_id}/video" preload="metadata" controls></video>` : '') +
+        `<div class="meta"><span>${when}</span><span class="st ${j.status}">${j.status}</span></div>`;
+      g.appendChild(d);
+    }
+  }catch(_e){/* gallery is best-effort */}
 }
 
 $('#continueBtn').onclick = async () => {
@@ -142,30 +403,44 @@ $('#continueBtn').onclick = async () => {
   const r = await api('/auth/dev-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});
   if(r.ok) refresh(); else toast('Sign-in failed');
 };
-$('#googleBtn') && ($('#googleBtn').onclick = ()=> location.href='/auth/google/login');
+$('#googleBtn').onclick = ()=> location.href='/auth/google/login';
 $('#signout').onclick = async ()=>{ await api('/auth/logout',{method:'POST'}); location.reload(); };
 $('#upgrade').onclick = ()=> location.href='/billing/checkout';
 
 $('#filmBtn').onclick = async () => {
   const url = $('#url').value.trim();
   if(!url.startsWith('http')){ toast('Enter a valid http(s) URL'); return; }
-  $('#filmBtn').disabled = true; $('#genState').textContent='Starting the film crew…'; $('#result').classList.add('hide');
-  const body = { url, template:$('#template').value, aspect:$('#aspect').value, voice:$('#voice').value };
+  $('#filmBtn').disabled = true; $('#genState').textContent='';
+  $('#result').classList.remove('on'); $('#prog').classList.add('on'); $('#ask').classList.add('busy');
+  $('#progText').textContent = 'The film crew is on set…';
+  const body = { url, template:TPL, aspect:ASPECT, voice:VOICE, brief:$('#brief').value.trim() };
   const r = await api('/api/generate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-  if(r.status===402){ const e=await r.json(); $('#genState').innerHTML='<span class="warn">'+e.detail+'</span>'; $('#filmBtn').disabled=false; return; }
-  if(!r.ok){ const e=await r.json().catch(()=>({detail:'error'})); $('#genState').innerHTML='<span class="err">'+(e.detail||'error')+'</span>'; $('#filmBtn').disabled=false; return; }
+  if(r.status===402){ const e=await r.json(); endRun(); $('#genState').innerHTML='<span class="warn">'+e.detail+'</span>'; return; }
+  if(!r.ok){ const e=await r.json().catch(()=>({detail:'error'})); endRun(); $('#genState').innerHTML='<span class="err">'+(e.detail||'error')+'</span>'; return; }
   const {job_id} = await r.json();
   poll(job_id);
 };
+function endRun(){ $('#filmBtn').disabled=false; $('#prog').classList.remove('on'); $('#ask').classList.remove('busy'); }
 async function poll(job_id){
   const r = await api('/api/jobs/'+job_id); const j = await r.json();
-  $('#genState').textContent = 'Filming… ('+j.status+')';
-  if(j.status==='done'){ $('#genState').textContent='Done.'; $('#video').src='/api/jobs/'+job_id+'/video';
-    $('#result').classList.remove('hide'); $('#filmBtn').disabled=false; refresh(); return; }
-  if(j.status==='failed'||j.status==='capped'){ $('#genState').innerHTML='<span class="err">'+j.status+': '+(j.detail||'')+'</span>'; $('#filmBtn').disabled=false; return; }
+  $('#progText').textContent = 'Filming… ('+j.status+')';
+  if(j.status==='done'){ endRun(); $('#genState').textContent='Done.';
+    $('#video').src='/api/jobs/'+job_id+'/video'; $('#result').classList.add('on'); refresh(); return; }
+  if(j.status==='failed'||j.status==='capped'){ endRun();
+    $('#genState').innerHTML='<span class="err">'+j.status+': '+(j.detail||'')+'</span>'; return; }
   setTimeout(()=>poll(job_id), 2500);
 }
 refresh();
 </script>
+
+<!-- Rho — the RHOBEAR companion, in Captur'd amber -->
+<script>
+  window.RHOBEAR_COMPANION = {
+    endpoint: 'https://workbench.rhobear.ai/companion',
+    ready: true,
+    accent: '#ff7d1f',
+  };
+</script>
+<script defer src="/assets/companion-embed.js"></script>
 </body>
 </html>

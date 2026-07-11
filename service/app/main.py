@@ -42,15 +42,17 @@ TEMPLATE_STYLE = {
 }
 
 
-def shot_from_template(url: str, template: str, name: str) -> dict:
+def shot_from_template(url: str, template: str, name: str, brief: str = "") -> dict:
     """A universal, always-works scroll-tour shot for any URL. The Director
     brain (scout→plan) replaces this with a tight per-app shot later; this
-    guarantees a real branded video today."""
+    guarantees a real branded video today. A director's brief becomes the
+    demo's opening line — the narrator speaks the user's own pitch."""
     style = TEMPLATE_STYLE.get(template, "snappy")
+    opening = (brief or "").strip() or "A look at the product"
     return {
         "name": name, "start_url": url, "prewait": 16, "style": style,
         "steps": [
-            {"action": "scroll", "value": "down", "note": "A look at the product", "wait": 2},
+            {"action": "scroll", "value": "down", "note": opening[:280], "wait": 2},
             {"action": "scroll", "value": "down", "note": "", "wait": 2},
             {"action": "scroll", "value": "top", "note": "Back to the top", "wait": 2},
         ],
@@ -98,13 +100,14 @@ def _run_generation(job_id: str, uid: str, url: str, template: str,
     store.record_job(job_id, uid, "walk", "running")
     # Director scout → a tight per-app shot; fall back to the generic tour.
     shot = None
+    brief = spec_kwargs.pop("brief", "")
     if build_shot is not None:
         try:
             shot = build_shot(url, template, name)
         except Exception:
             shot = None
     if not shot:
-        shot = shot_from_template(url, template, name)
+        shot = shot_from_template(url, template, name, brief)
     spec = JobSpec(shot=shot, job_id=job_id, **spec_kwargs)
     res = run_job(spec, config.JOBS_DIR)
     store.record_job(job_id, uid, "walk", res.status, res.output, res.detail)
@@ -137,15 +140,26 @@ async def generate(request: Request, background: BackgroundTasks):
     cap = CostCap(max_seconds=int(body.get("max_seconds", 360)))
     spec_kwargs = {
         "aspect": body.get("aspect", "16:9"),
-        "brand": body.get("brand", "#4f8cff"),
+        "brand": body.get("brand", "#ff7d1f"),
         "intro": body.get("intro", ""),
         "outro": body.get("outro", ""),
         "voice": body.get("voice", ""),
+        "brief": (body.get("brief") or "")[:500],
         "cap": cap,
     }
     store.record_job(job_id, user["id"], "walk", "queued")
     background.add_task(_run_generation, job_id, user["id"], url, template, name, spec_kwargs)
     return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
+
+
+@app.get("/api/jobs")
+async def jobs_list(request: Request):
+    user = require_user(request)
+    jobs = store.list_jobs(user["id"])
+    return {"jobs": [
+        {"job_id": j["id"], "status": j["status"], "detail": j["detail"],
+         "created_at": j["created_at"], "has_video": bool(j["output"])}
+        for j in jobs]}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -178,6 +192,15 @@ async def index():
     if idx.is_file():
         return HTMLResponse(idx.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Captur'd</h1><p>frontend missing</p>")
+
+
+@app.get("/m", response_class=HTMLResponse)
+async def mobile_studio():
+    """The explicit PHONE studio (reach-detection on / sends phones here)."""
+    page = WEB / "m.html"
+    if page.is_file():
+        return HTMLResponse(page.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Captur'd</h1><p>mobile studio missing</p>")
 
 
 if (WEB / "assets").is_dir():
