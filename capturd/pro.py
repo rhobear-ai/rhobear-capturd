@@ -32,9 +32,9 @@ from pathlib import Path
 PRO_CONFIG = {
     "product_name": "RHOBEAR Captur'd Pro",
     "price_label": "$19 / mo",
-    "checkout_url": "",   # <-- OWNER: your Stripe/PayPal buy link
-    "codes": [],          # <-- OWNER: ["CAPTURD-LAUNCH-2026", ...]
-    "pubkey_b64": "",     # <-- OWNER: Ed25519 public key (raw 32 bytes, base64) for signed licenses
+    "checkout_url": "https://buy.stripe.com/14AbIU1Cf5wvcrxfxEg7e01",   # LIVE Stripe Payment Link (Captur'd Pro $19/mo)
+    "codes": [],          # launch codes (owner emails on purchase)
+    "pubkey_b64": "2NG4IJx5yLCk9IrDXDU6h0WHOtMLeZafiOGC0HDDFBs=",  # founder license pubkey (public)
 }
 
 _LICENSE_ENV = "RHOBEAR_CAPTURD_LICENSE"
