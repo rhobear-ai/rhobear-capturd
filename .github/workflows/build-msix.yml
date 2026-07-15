@@ -9,6 +9,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-msix:
     name: Build Capturd MSIX
@@ -105,3 +108,37 @@ jobs:
           path: dist/Capturd-0.2.0.msix
           if-no-files-found: error
           retention-days: 30
+
+      - name: Sign MSIX (Azure Trusted Signing)
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $cli = "$env:RUNNER_TEMP\artifact-signing-cli.exe"
+          Invoke-WebRequest -Uri "https://github.com/Levminer/artifact-signing-cli/releases/download/0.11.0/artifact-signing-cli.exe" -OutFile $cli
+          & $cli -e https://eus.codesigning.azure.net/ -a rhobear-signing -c rhobear-public "$env:MSIX_OUTPUT"
+          if ($LASTEXITCODE -ne 0) { throw "Azure Trusted Signing failed (exit $LASTEXITCODE)" }
+          $sig = Get-AuthenticodeSignature "$env:MSIX_OUTPUT"
+          Write-Host "Signature status: $($sig.Status)"
+          Write-Host "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "Signature not Valid: $($sig.Status)" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "$env:MSIX_OUTPUT" "dist/RHOBEAR-Capturd-Setup.msix" -Force
+
+      - name: Publish signed MSIX to capturd-latest release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "capturd-latest"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag "dist/RHOBEAR-Capturd-Setup.msix" `
+              --title "RHOBEAR Captur'd — Desktop (latest)" `
+              --notes "Signed, one-click Windows installer (MSIX). Double-click to install — Microsoft-trusted signature, no SmartScreen warning. Post-work product capture: stills and agent-made walkthroughs." `
+              --latest=false
+          } else {
+            gh release upload $tag "dist/RHOBEAR-Capturd-Setup.msix" --clobber
+          }
