@@ -55,6 +55,9 @@ BILLING_WEBHOOK_SECRET = _env("BILLING_WEBHOOK_SECRET")
 GW_API_KEY = _env("RHOBEAR_GW_API_KEY")               # optional: agent self-drive
 DEV_LOGIN = _env("CAPTURD_DEV_LOGIN", "1") == "1"     # allow dev login until OAuth is wired
 
+# Central auth — identity comes from auth.rhobear.ai
+RHOBEAR_AUTH_BASE = _env("RHOBEAR_AUTH_BASE", "https://auth.rhobear.ai")
+
 # Enterprise self-host: this whole service IS the enterprise edition when run on
 # the customer's own box. No separate build — same code, self-hosted.
 EDITION = _env("CAPTURD_EDITION", "hosted")           # hosted | enterprise
