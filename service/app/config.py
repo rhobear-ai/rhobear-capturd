@@ -8,7 +8,6 @@ The ONLY hard stops for going live (owner's words: "you can't install something
 if my PayPal credentials aren't in there"):
   * PRO_CHECKOUT_URL      — the buy button target (Stripe Payment Link / PayPal subscribe URL)
   * BILLING_WEBHOOK_SECRET — verifies the "payment succeeded" callback that flips a user to Pro
-  * GOOGLE_CLIENT_ID/SECRET — real Google sign-in (dev-login covers everything until then)
 
 Drop them in the environment (or D:\rhobear-agent-vault\ files) and the flow is live.
 """
@@ -48,12 +47,12 @@ FREE_SHOT_LIMIT = int(_env("CAPTURD_FREE_SHOT_LIMIT", "20"))
 PRO_PRICE = _env("CAPTURD_PRO_PRICE", "$19")
 
 # ---- OWNER-GATED credentials (honest flags) ----------------------------------
-GOOGLE_CLIENT_ID = _env("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = _env("GOOGLE_CLIENT_SECRET")
 PRO_CHECKOUT_URL = _env("PRO_CHECKOUT_URL")           # buy button target
 BILLING_WEBHOOK_SECRET = _env("BILLING_WEBHOOK_SECRET")
 GW_API_KEY = _env("RHOBEAR_GW_API_KEY")               # optional: agent self-drive
-DEV_LOGIN = _env("CAPTURD_DEV_LOGIN", "1") == "1"     # allow dev login until OAuth is wired
+
+# Central auth — identity comes from auth.rhobear.ai
+RHOBEAR_AUTH_BASE = _env("RHOBEAR_AUTH_BASE", "https://auth.rhobear.ai")
 
 # Enterprise self-host: this whole service IS the enterprise edition when run on
 # the customer's own box. No separate build — same code, self-hosted.
@@ -63,11 +62,9 @@ EDITION = _env("CAPTURD_EDITION", "hosted")           # hosted | enterprise
 def status() -> dict:
     """Honest readiness — what's wired vs what waits on the owner's credentials."""
     return {
-        "oauth_configured": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET),
         "billing_configured": bool(PRO_CHECKOUT_URL),
         "webhook_configured": bool(BILLING_WEBHOOK_SECRET),
         "gateway_configured": bool(GW_API_KEY),
-        "dev_login": DEV_LOGIN,
         "edition": EDITION,
     }
 

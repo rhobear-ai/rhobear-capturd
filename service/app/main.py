@@ -82,13 +82,15 @@ async def me(request: Request):
         return {"signed_in": False, "config": config.status(),
                 "pro_price": config.PRO_PRICE}
     gens = store.usage_count(u["id"], "generation")
+    entitled = u["plan"] == "pro"
     return {
         "signed_in": True, "email": u["email"], "plan": u["plan"],
+        "entitled": entitled,
         "usage": {"generations": gens,
                   "free_limit": config.FREE_GENERATION_LIMIT,
-                  "remaining": (None if u["plan"] == "pro"
+                  "remaining": (None if entitled
                                 else max(0, config.FREE_GENERATION_LIMIT - gens))},
-        "mcp_endpoint": (f"{config.BASE_URL}/mcp/{u['id']}" if u["plan"] == "pro" else None),
+        "mcp_endpoint": (f"{config.BASE_URL}/mcp/{u['id']}" if entitled else None),
         "config": config.status(), "pro_price": config.PRO_PRICE,
     }
 

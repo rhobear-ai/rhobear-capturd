@@ -248,13 +248,11 @@
       <h1>Your app, filmed by an agent.</h1>
       <p>Give it a URL — the crew films the demo. First one's free.</p>
     </div>
-    <div class="card">
-      <label>Email</label>
-      <input id="email" type="email" placeholder="you@company.com" autocomplete="email">
-      <div style="height:12px"></div>
-      <button id="continueBtn" class="btn btn--primary" style="width:100%;height:52px;border-radius:12px">Continue</button>
-      <button class="btn hide" id="googleBtn" style="width:100%;margin-top:8px">Continue with Google</button>
-      <p class="note" id="devNote" style="margin-top:12px"></p>
+    <div class="card" style="text-align:center">
+      <button id="signinBtn" class="btn btn--primary" style="width:100%;height:52px;border-radius:12px;font-size:.95rem;justify-content:center">
+        <svg class="icn" style="width:20px;height:20px"><use href="#i-login"/></svg>Sign in with RHOBEAR
+      </button>
+      <p class="note" style="margin-top:12px">Google, email, or magic link — one account for every product.</p>
       <div style="display:flex;align-items:center;justify-content:center;gap:7px;font-size:.76rem;color:var(--ok);margin-top:12px">
         <span style="width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 6px rgba(0,255,136,.6)"></span>
         First one&rsquo;s free &mdash; no card required.</div>
@@ -336,6 +334,10 @@ const api = (path, opts) => fetch(path, opts);
 
 let ME=null, TPL='saas-walkthrough', ASPECT='9:16', VOICE='vertex:Charon:warm';
 
+// If the page just landed from auth.rhobear.ai we have a token to exchange
+// — set the flag so refresh() waits for the exchange before rendering.
+var _exchanging = !!new URLSearchParams(location.search).get('rhobear_session');
+
 $('#tpls').addEventListener('click', e => { const b=e.target.closest('.tpl'); if(!b) return;
   document.querySelectorAll('.tpl').forEach(x=>x.classList.remove('sel')); b.classList.add('sel'); TPL=b.dataset.tpl; });
 $('#aspect').addEventListener('click', e => { const b=e.target.closest('button'); if(!b) return;
@@ -346,19 +348,18 @@ document.querySelectorAll('.hintchip').forEach(c => c.addEventListener('click', 
   $('#brief').value = c.dataset.hint; }));
 
 async function refresh(){
+  if(_exchanging) return;                   // waiting for token exchange
   const r = await api('/api/me'); ME = await r.json();
   if(!ME.signed_in){
     $('#signedOut').classList.remove('hide'); $('#dash').classList.add('hide');
     $('#filmbar').classList.add('hide'); $('#planPill').classList.add('hide'); $('#signout').classList.add('hide');
-    if(ME.config.oauth_configured){ $('#googleBtn').classList.remove('hide'); }
-    else if(ME.config.dev_login){ $('#devNote').textContent='Google sign-in comes with OAuth — use email for now.'; }
     return;
   }
   $('#signedOut').classList.add('hide'); $('#dash').classList.remove('hide');
   $('#filmbar').classList.remove('hide'); $('#signout').classList.remove('hide');
-  const pp=$('#planPill'); pp.classList.remove('hide'); pp.textContent=ME.plan; pp.className='pill'+(ME.plan==='pro'?' pro':' free');
+  const pp=$('#planPill'); pp.classList.remove('hide'); pp.textContent=ME.plan; pp.className='pill'+(ME.entitled?' pro':' free');
   const u=ME.usage;
-  if(ME.plan==='pro'){ $('#usageLabel').textContent=`Pro — unlimited demos (${u.generations} filmed)`;
+  if(ME.entitled){ $('#usageLabel').textContent=`Pro — unlimited demos (${u.generations} filmed)`;
     $('#usageBar').style.width='100%'; $('#upgrade').classList.add('hide'); }
   else { $('#usageLabel').textContent=`${u.generations} / ${u.free_limit} free demo used`;
     $('#usageBar').style.width=Math.min(100,100*u.generations/Math.max(1,u.free_limit))+'%';
@@ -385,15 +386,39 @@ async function loadGallery(){
     }
   }catch(_e){}
 }
-$('#continueBtn').onclick = async () => {
-  const email=$('#email').value.trim();
-  if(!email.includes('@')){ toast('Enter a valid email'); return; }
-  const r=await api('/auth/dev-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email})});
-  if(r.ok) refresh(); else toast('Sign-in failed');
+
+// ---- central auth sign-in ------------------------------------------------
+$('#signinBtn').onclick = ()=>{
+  var u = new URL(location.href);
+  u.searchParams.delete('rhobear_session');
+  location.href = 'https://auth.rhobear.ai/auth/dev?redirect=' + encodeURIComponent(u.toString());
 };
-$('#googleBtn').onclick = ()=> location.href='/auth/google/login';
 $('#signout').onclick = async ()=>{ await api('/auth/logout',{method:'POST'}); location.reload(); };
 $('#upgrade').onclick = ()=> location.href='/billing/checkout';
+
+// ---- rhobear_session redirect exchange ------------------------------------
+(async function(){
+  var p = new URLSearchParams(location.search);
+  var tok = p.get('rhobear_session');
+  if(!tok){ _exchanging = false; return; }
+  try{
+    var r = await fetch('/auth/central', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({rhobear_session:tok})
+    });
+    if(r.ok){
+      var u2 = new URL(location.href);
+      u2.searchParams.delete('rhobear_session');
+      history.replaceState(null, '', u2);
+      _exchanging = false;
+      refresh();
+      return;
+    }
+    toast('Sign-in failed — try again.');
+  }catch(e){ toast('Could not reach auth server.'); }
+  _exchanging = false;
+  refresh();
+})();
 $('#filmBtn').onclick = async () => {
   const url=$('#url').value.trim();
   if(!url.startsWith('http')){ toast('Enter a valid http(s) URL'); return; }

@@ -1,16 +1,17 @@
-"""Auth — session cookies, Google OAuth (credential-ready), dev login.
+"""Auth — identity comes from central auth (auth.rhobear.ai); this holds the local session.
 
-Dev login lets the whole product work end-to-end NOW; the moment the owner drops
-a Google client id/secret, real OAuth takes over with zero code change.
+Captur'd no longer carries its own login. A caller exchanges a `rhobear_session`
+from central auth at POST /auth/central for an httponly Captur'd session cookie,
+and the plan is taken from central auth's `entitled` decision rather than
+re-derived here. Staff and agents sign in at https://auth.rhobear.ai/auth/dev.
 """
 from __future__ import annotations
 
-import urllib.parse
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse
 
 from . import config, store
 
@@ -29,69 +30,63 @@ def require_user(request: Request) -> dict:
     return u
 
 
-def _set_session(resp: Response, uid: str) -> None:
-    token = store.new_session(uid)
-    secure = config.BASE_URL.startswith("https")
-    resp.set_cookie(COOKIE, token, httponly=True, samesite="lax",
-                    secure=secure, max_age=60 * 60 * 24 * 30)
+# NOTE: the local /auth/dev-login and /auth/google/{login,callback} endpoints were
+# removed on 2026-07-18. Identity now comes from central auth (auth.rhobear.ai)
+# via /auth/central below — one login for every RHOBEAR product. Staff/agents use
+# the central dev sign-in at https://auth.rhobear.ai/auth/dev.
 
+# ---- central auth exchange (identity from auth.rhobear.ai) -----------------
 
-# ---- dev login (works until real OAuth is wired) ----------------------------
-
-@router.post("/dev-login")
-async def dev_login(request: Request):
-    if not config.DEV_LOGIN:
-        raise HTTPException(status_code=403, detail="dev login disabled")
+@router.post("/central")
+async def central_login(request: Request):
+    """Exchange a rhobear_session token from central auth for a local session."""
     body = await request.json()
-    email = (body.get("email") or "").strip().lower()
-    if "@" not in email:
-        raise HTTPException(status_code=400, detail="valid email required")
+    token = (body.get("rhobear_session") or "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="rhobear_session required")
+
+    # Validate the token against central auth
+    try:
+        async with httpx.AsyncClient(timeout=10) as cx:
+            me_resp = await cx.get(
+                f"{config.RHOBEAR_AUTH_BASE}/auth/me",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if me_resp.status_code != 200:
+                raise HTTPException(status_code=401, detail="invalid session")
+            me = me_resp.json()
+    except httpx.RequestError:
+        raise HTTPException(status_code=502, detail="could not reach central auth")
+
+    email = (me.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="no email in central auth response")
+
+    # Create/update local user from central auth identity
     user = store.upsert_user(email)
-    resp = Response(status_code=204)
-    _set_session(resp, user["id"])
-    return resp
 
+    # Plan comes from central auth's entitlement decision — never re-derived here.
+    # `entitled` is already true for dev accounts (central auth sets it for plan='dev'),
+    # for any paid plan, and for a live trial, so there is nothing to OR in. An extra
+    # `or me.get("is_dev")` was redundant and read like a backdoor; dropped.
+    # `me` comes from a server-to-server /auth/me call, so it is not user-controllable.
+    entitled = bool(me.get("entitled", False))
+    current_plan = "pro" if entitled else "free"
+    if user["plan"] != current_plan:
+        store.set_plan(user["id"], current_plan)
+        user["plan"] = current_plan
 
-# ---- Google OAuth (inert until GOOGLE_CLIENT_ID/SECRET are set) --------------
-
-@router.get("/google/login")
-async def google_login():
-    if not config.status()["oauth_configured"]:
-        raise HTTPException(status_code=503, detail="google sign-in not configured yet")
-    params = {
-        "client_id": config.GOOGLE_CLIENT_ID,
-        "redirect_uri": f"{config.BASE_URL}/auth/google/callback",
-        "response_type": "code",
-        "scope": "openid email",
-        "access_type": "online",
-        "prompt": "select_account",
-    }
-    return RedirectResponse(
-        "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params))
-
-
-@router.get("/google/callback")
-async def google_callback(code: str = ""):
-    if not code:
-        raise HTTPException(status_code=400, detail="missing code")
-    async with httpx.AsyncClient(timeout=15) as cx:
-        tok = await cx.post("https://oauth2.googleapis.com/token", data={
-            "code": code, "client_id": config.GOOGLE_CLIENT_ID,
-            "client_secret": config.GOOGLE_CLIENT_SECRET,
-            "redirect_uri": f"{config.BASE_URL}/auth/google/callback",
-            "grant_type": "authorization_code",
-        })
-        tok.raise_for_status()
-        access = tok.json()["access_token"]
-        info = await cx.get("https://www.googleapis.com/oauth2/v3/userinfo",
-                            headers={"Authorization": f"Bearer {access}"})
-        info.raise_for_status()
-        email = info.json().get("email", "")
-    if "@" not in email:
-        raise HTTPException(status_code=400, detail="no email from google")
-    user = store.upsert_user(email)
-    resp = RedirectResponse("/", status_code=303)
-    _set_session(resp, user["id"])
+    # Set local session cookie so subsequent requests use httponly auth
+    local_token = store.new_session(user["id"])
+    secure = config.BASE_URL.startswith("https")
+    resp = JSONResponse({
+        "signed_in": True,
+        "email": user["email"],
+        "plan": user["plan"],
+        "entitled": entitled,
+    })
+    resp.set_cookie(COOKIE, local_token, httponly=True, samesite="lax",
+                    secure=secure, max_age=60 * 60 * 24 * 30)
     return resp
 
 
