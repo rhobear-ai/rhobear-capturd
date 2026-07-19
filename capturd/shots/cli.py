@@ -74,8 +74,11 @@ def _parse_cookies(raw: list[str]) -> list[dict]:
         name, value, domain = name.strip(), value.strip(), domain.strip()
         if not (name and value and domain):
             raise SystemExit(f"error: --cookie must look like NAME=VALUE;DOMAIN (got {item!r})")
+        # A `secure` cookie is never sent over http, so marking one for localhost would
+        # silently drop it and every local capture would come back logged out.
+        local = domain.split(":")[0] in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
         out.append({"name": name, "value": value, "domain": domain,
-                    "path": "/", "secure": True, "httpOnly": False})
+                    "path": "/", "secure": not local, "httpOnly": False})
     return out
 
 
