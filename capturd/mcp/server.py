@@ -52,11 +52,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastmcp import FastMCP
 
@@ -66,10 +68,57 @@ from capturd.walk.coordinator import (
     DemoForgeError,
     DemoNotFound,
     DEMOS_DIR_NAME,
-    demos_root,
 )
 
 logger = logging.getLogger("capturd.mcp.server")
+
+
+# ── SSRF guard ─────────────────────────────────────────────────────────────
+# Shared by demo.record (HIGH #12) to prevent Playwright from navigating to
+# private/internal IPs.
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    if ":" in ip_str:
+        if ip_str.startswith("::1") or ip_str == "::":
+            return True
+        if ip_str.startswith("fc") or ip_str.startswith("fd"):
+            return True
+        if ip_str.startswith("fe80"):
+            return True
+        return False
+    try:
+        parts = ip_str.split(".")
+        addr = (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
+    except (ValueError, IndexError):
+        return False
+    for lo, hi in (
+        ("10.0.0.0", "10.255.255.255"),
+        ("172.16.0.0", "172.31.255.255"),
+        ("192.168.0.0", "192.168.255.255"),
+        ("127.0.0.0", "127.255.255.255"),
+        ("169.254.0.0", "169.254.255.255"),
+        ("0.0.0.0", "0.255.255.255"),
+    ):
+        lo_int = (int(lo.split(".")[0]) << 24) + (int(lo.split(".")[1]) << 16) + (int(lo.split(".")[2]) << 8) + int(lo.split(".")[3])
+        hi_int = (int(hi.split(".")[0]) << 24) + (int(hi.split(".")[1]) << 16) + (int(hi.split(".")[2]) << 8) + int(hi.split(".")[3])
+        if lo_int <= addr <= hi_int:
+            return True
+    return False
+
+
+def _reject_private_url(url: str) -> None:
+    host = urlparse(url).hostname
+    if not host:
+        raise ValueError("could not parse host from url")
+    try:
+        addrinfo = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise ValueError(f"hostname not found: {exc}") from exc
+    for family, _type, _proto, _canon, sockaddr in addrinfo:
+        ip = sockaddr[0]
+        if _is_private_ip(ip):
+            raise ValueError(f"url resolves to a private/internal IP ({ip}) — not allowed")
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +183,12 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
     ) -> dict[str, Any]:
         if not url:
             raise ValueError("url is required")
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("url must be http:// or https://")
+        try:
+            _reject_private_url(url)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         if not name:
             raise ValueError("name is required")
         if mode not in ("agent", "human", "live"):
@@ -269,9 +324,14 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError(f"no live session for id {session_id!r} — start one with demo.record mode='live'")
         recorder = live["recorder"]
         try:
-            return await asyncio.to_thread(
-                recorder.act, action, selector or None, value or None, note or None
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    recorder.act, action, selector or None, value or None, note or None
+                ),
+                timeout=50.0,
             )
+        except asyncio.TimeoutError:
+            raise ValueError("recorder action timed out")
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -294,7 +354,12 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError(f"no live session for id {session_id!r}")
         recorder = live["recorder"]
         try:
-            return await asyncio.to_thread(recorder.narrate, text)
+            return await asyncio.wait_for(
+                asyncio.to_thread(recorder.narrate, text),
+                timeout=20.0,
+            )
+        except asyncio.TimeoutError:
+            raise ValueError("narrate timed out")
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -321,7 +386,12 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError(f"no live session for id {session_id!r}")
         recorder = live["recorder"]
         try:
-            return await asyncio.to_thread(recorder.poll_voice)
+            return await asyncio.wait_for(
+                asyncio.to_thread(recorder.poll_voice),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            raise ValueError("poll_voice timed out")
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -347,7 +417,12 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             raise ValueError(f"no live session for id {session_id!r}")
         recorder = live["recorder"]
         try:
-            return await asyncio.to_thread(recorder.look)
+            return await asyncio.wait_for(
+                asyncio.to_thread(recorder.look),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            raise ValueError("look timed out")
         except DemoRecorderError as exc:
             raise ValueError(str(exc)) from exc
 
@@ -391,7 +466,10 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
             def _await_agent() -> None:
                 live["thread"].join(timeout=300.0)
 
-            await asyncio.to_thread(_await_agent)
+            await asyncio.wait_for(
+                asyncio.to_thread(_await_agent),
+                timeout=310.0,
+            )
             if live["thread"].is_alive():
                 raise RuntimeError(
                     "agent recording did not finish within 300s — "
@@ -401,7 +479,10 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         else:
             # Human mode: bridge into the recorder's parked loop.
             try:
-                spec = await asyncio.to_thread(recorder.stop)
+                spec = await asyncio.wait_for(
+                asyncio.to_thread(recorder.stop),
+                timeout=60.0,
+            )
             except DemoRecorderError as exc:
                 raise ValueError(str(exc)) from exc
             except Exception as exc:  # pragma: no cover - defensive
@@ -570,7 +651,10 @@ def _build_server(forge: DemoForge | None = None) -> FastMCP:
         if fmt not in {"html", "mp4", "gif"}:
             raise ValueError(f"format must be one of html, mp4, gif — got {format!r}")
         try:
-            out_path = await asyncio.to_thread(forge.export_demo, demo_id, fmt=fmt)
+            out_path = await asyncio.wait_for(
+                asyncio.to_thread(forge.export_demo, demo_id, fmt=fmt),
+                timeout=850.0,
+            )
         except DemoNotFound:
             raise ValueError(f"demo not found: {demo_id}")
         except DemoForgeError as exc:
@@ -1012,7 +1096,6 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "DEMOS_DIR_NAME",
     "_build_server",
-    "demos_root",
     "main",
 ]
 

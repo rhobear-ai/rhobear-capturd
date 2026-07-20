@@ -6,10 +6,12 @@ end-to-end today except the owner's payment credentials (see billing.py / config
 """
 from __future__ import annotations
 
+import socket
 import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -24,7 +26,8 @@ from app.auth import current_user, require_user          # noqa: E402
 from render_worker import CostCap, JobSpec, run_job       # noqa: E402
 
 # the Director scout lives in the rig; add it to path
-RIG = Path(config._env("CAPTURD_RIG", r"C:\Users\slang\.claude\skills\capturd-autopilot\rig"))
+# Defaults to <service_root>/rig — override via CAPTURD_RIG env var.
+RIG = Path(config._env("CAPTURD_RIG", str(SERVICE_DIR / "rig")))
 if RIG.is_dir():
     sys.path.insert(0, str(RIG))
 try:
@@ -56,6 +59,72 @@ def shot_from_template(url: str, template: str, name: str) -> dict:
         ],
         "export": ["mp4"],
     }
+
+
+# ── SSRF guard ─────────────────────────────────────────────────────────────
+# Blocks requests to private/internal IP ranges when making Playwright
+# navigate to user-supplied URLs. Checks DNS resolution + RFC 1918/loopback/
+# link-local/cloud-metadata ranges.
+
+_PRIVATE_RANGES = (
+    ("10.0.0.0", "10.255.255.255"),          # RFC 1918 10/8
+    ("172.16.0.0", "172.31.255.255"),         # RFC 1918 172.16/12
+    ("192.168.0.0", "192.168.255.255"),       # RFC 1918 192.168/16
+    ("127.0.0.0", "127.255.255.255"),         # loopback
+    ("169.254.0.0", "169.254.255.255"),       # link-local
+    ("0.0.0.0", "0.255.255.255"),             # current-network
+    ("::1", "::1"),                           # IPv6 loopback
+    ("fc00::", "fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"),  # IPv6 unique-local
+    ("fe80::", "febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"),  # IPv6 link-local
+)
+
+
+def _ip_to_int(ip_str: str) -> int:
+    """Convert an IPv4 string to an integer for range comparison."""
+    parts = ip_str.split(".")
+    return (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """Check if an IP address falls within any known private/internal range."""
+    if ":" in ip_str:
+        # IPv6: check well-known prefixes
+        if ip_str.startswith("::1"):
+            return True
+        if ip_str.startswith("fc") or ip_str.startswith("fd"):
+            return True
+        if ip_str.startswith("fe80"):
+            return True
+        if ip_str == "::":
+            return True
+        return False
+    try:
+        addr = _ip_to_int(ip_str)
+    except (ValueError, IndexError):
+        return False
+    for lo, hi in _PRIVATE_RANGES:
+        if _ip_to_int(lo) <= addr <= _ip_to_int(hi):
+            return True
+    return False
+
+
+def _reject_private_url(url: str) -> None:
+    """Raise HTTPException if *url* resolves to a private/internal IP address."""
+    host = urlparse(url).hostname
+    if not host:
+        raise HTTPException(status_code=400, detail="could not parse host from url")
+    # resolve the hostname
+    try:
+        addrinfo = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise HTTPException(status_code=400, detail=f"hostname not found: {exc}") from exc
+    for family, _type, _proto, _canon, sockaddr in addrinfo:
+        ip = sockaddr[0]
+        if _is_private_ip(ip):
+            raise HTTPException(
+                status_code=403,
+                detail=f"url resolves to a private/internal IP ({ip}) — not allowed",
+            )
 
 
 @asynccontextmanager
@@ -117,10 +186,11 @@ def _run_generation(job_id: str, uid: str, url: str, template: str,
 @app.post("/api/generate")
 async def generate(request: Request, background: BackgroundTasks):
     user = require_user(request)
-    body = await request.json()
+    body = await request.json(max_size=500 * 1024)  # 500 KB max
     url = (body.get("url") or "").strip()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="a valid http(s) url is required")
+    _reject_private_url(url)
     template = body.get("template") or "saas-walkthrough"
 
     # plan / usage gate (canon: Free = 1 generation)
@@ -168,7 +238,12 @@ async def job_video(job_id: str, request: Request):
         raise HTTPException(status_code=404, detail="job not found")
     if job["status"] != "done" or not job["output"]:
         raise HTTPException(status_code=409, detail=f"job is {job['status']}")
-    p = Path(job["output"])
+    p = Path(job["output"]).resolve()
+    # Defense in depth: ensure the resolved path stays within JOBS_DIR.
+    try:
+        p.relative_to(config.JOBS_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid output path")
     if not p.is_file():
         raise HTTPException(status_code=410, detail="video no longer available")
     return FileResponse(str(p), media_type="video/mp4", filename=f"{job_id}.mp4")

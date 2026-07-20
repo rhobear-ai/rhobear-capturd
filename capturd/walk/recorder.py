@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import json
 import logging
 import os
@@ -1725,6 +1726,9 @@ class DemoManager:
 
         viewport = payload.get("viewport") or {"width": 1440, "height": 900}
         session_id = payload.get("sessionId") or self.new_session_id()
+        # Sanitize sessionId to prevent directory traversal: strip "..", "/", "\".
+        if not session_id or "\x00" in session_id or ".." in session_id or "/" in session_id or "\\" in session_id:
+            raise DemoRecorderError(f"invalid sessionId: {session_id!r}")
         out_dir = self.output_root / session_id
 
         # Live sessions default voice ON (the whole point is talking to it);
@@ -1791,17 +1795,26 @@ class DemoManager:
 # Helper for synchronous callers (FastAPI threadpool)
 # ---------------------------------------------------------------------------
 
+_run_async_executor: concurrent.futures.ThreadPoolExecutor | None = None
+
 
 def run_async(coro: Any) -> Any:
-    """Run an async coroutine to completion from sync code."""
+    """Run an async coroutine to completion from sync code.
+
+    Reuses a module-level thread pool executor across calls to avoid
+    unbounded thread + event-loop churn under concurrent export requests.
+    """
+    global _run_async_executor
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # We're inside an async context; create a new loop in a thread.
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                return ex.submit(asyncio.run, coro).result()
+            # We're inside an async context; reuse a cached executor.
+            if _run_async_executor is None:
+                _run_async_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="run_async",
+                )
+            return _run_async_executor.submit(asyncio.run, coro).result()
         return loop.run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
@@ -1822,8 +1835,5 @@ __all__ = [
     "_detect_content_mode",
     "_classify_content_mode",
     "_parse_agent_reply",
-    "VoiceConfig",
-    "VoiceLoop",
-    "VoiceLoopError",
     "run_async",
 ]

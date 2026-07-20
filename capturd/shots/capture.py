@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import threading
 import time
 import uuid
@@ -333,7 +334,56 @@ def _parse_sitemap_xml(xml_bytes: bytes) -> tuple[list[str], list[str]]:
     return page_urls, sitemap_urls
 
 
+def _is_private_ip(ip_str: str) -> bool:
+    """Check if an IP address falls within private/internal ranges (RFC 1918, loopback, link-local, etc.)."""
+    if ":" in ip_str:
+        if ip_str.startswith("::1") or ip_str == "::":
+            return True
+        if ip_str.startswith("fc") or ip_str.startswith("fd"):
+            return True
+        if ip_str.startswith("fe80"):
+            return True
+        return False
+    try:
+        parts = ip_str.split(".")
+        addr = (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
+    except (ValueError, IndexError):
+        return False
+    ranges = (
+        ("10.0.0.0", "10.255.255.255"),
+        ("172.16.0.0", "172.31.255.255"),
+        ("192.168.0.0", "192.168.255.255"),
+        ("127.0.0.0", "127.255.255.255"),
+        ("169.254.0.0", "169.254.255.255"),
+        ("0.0.0.0", "0.255.255.255"),
+    )
+    for lo, hi in ranges:
+        lo_parts = lo.split(".")
+        hi_parts = hi.split(".")
+        lo_int = (int(lo_parts[0]) << 24) + (int(lo_parts[1]) << 16) + (int(lo_parts[2]) << 8) + int(lo_parts[3])
+        hi_int = (int(hi_parts[0]) << 24) + (int(hi_parts[1]) << 16) + (int(hi_parts[2]) << 8) + int(hi_parts[3])
+        if lo_int <= addr <= hi_int:
+            return True
+    return False
+
+
+def _reject_private_url(url: str) -> None:
+    """Raise RestedCaptureError if *url* resolves to a private/internal IP address."""
+    host = urlparse(url).hostname
+    if not host:
+        raise RestedCaptureError("could not parse host from url")
+    try:
+        addrinfo = socket.getaddrinfo(host, None)
+    except socket.gaierror as exc:
+        raise RestedCaptureError(f"hostname not found: {exc}") from exc
+    for family, _type, _proto, _canon, sockaddr in addrinfo:
+        ip = sockaddr[0]
+        if _is_private_ip(ip):
+            raise RestedCaptureError(f"url resolves to a private/internal IP ({ip}) — not allowed")
+
+
 def _fetch_url_bytes(url: str, timeout: int = 20, limit: int = 10 * 1024 * 1024) -> tuple[bytes, dict[str, str]]:
+    _reject_private_url(url)
     req = urlrequest.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
     with urlrequest.urlopen(req, timeout=timeout) as resp:
         body = resp.read(limit)
@@ -1290,7 +1340,7 @@ class RestedCaptureManager:
         thread = threading.Thread(
             target=self._run_job,
             args=(job_id, targets, settings, work_dir, shots_dir, export_dir, export_mode),
-            daemon=True,
+            daemon=False,
             name=f"rested-capture-{job_id}",
         )
         thread.start()

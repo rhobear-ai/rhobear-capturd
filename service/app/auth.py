@@ -40,7 +40,7 @@ def require_user(request: Request) -> dict:
 @router.post("/central")
 async def central_login(request: Request):
     """Exchange a rhobear_session token from central auth for a local session."""
-    body = await request.json()
+    body = await request.json(max_size=1024 * 10)  # 10 KB max — just a token
     token = (body.get("rhobear_session") or "").strip()
     if not token:
         raise HTTPException(status_code=400, detail="rhobear_session required")
@@ -85,7 +85,7 @@ async def central_login(request: Request):
         "plan": user["plan"],
         "entitled": entitled,
     })
-    resp.set_cookie(COOKIE, local_token, httponly=True, samesite="lax",
+    resp.set_cookie(COOKIE, local_token, httponly=True, samesite="strict",
                     secure=secure, max_age=60 * 60 * 24 * 30)
     return resp
 

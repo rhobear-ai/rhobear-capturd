@@ -112,6 +112,7 @@ async def _llm_text(
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_tokens,
         temperature=0.4,
+        timeout=30.0,
     )
     return (resp.choices[0].message.content or "").strip()
 
@@ -138,6 +139,7 @@ async def _llm_vision(
         }],
         max_tokens=max_tokens,
         temperature=0.4,
+        timeout=45.0,
     )
     return (resp.choices[0].message.content or "").strip()
 

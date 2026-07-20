@@ -23,6 +23,7 @@ CLI:  python render_worker.py <job.json>
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -30,8 +31,14 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-RIG = Path(r"C:\Users\slang\.claude\skills\capturd-autopilot\rig")
-ENGINE_REPO = Path(r"C:\Users\slang\sunsponge-capture")
+# The Director rig (film.py / finish.py) and the engine repo are configurable
+# via env vars so the same code works on any machine. The service's main.py
+# shares the CAPTURD_RIG env var; ENGINE_REPO has its own variable.
+SERVICE_DIR = Path(__file__).resolve().parent
+_RIG_ENV = os.environ.get("CAPTURD_RIG", "").strip()
+_ENGINE_ENV = os.environ.get("CAPTURD_ENGINE_REPO", "").strip()
+RIG = Path(_RIG_ENV) if _RIG_ENV else (SERVICE_DIR / ".." / "rig").resolve()
+ENGINE_REPO = Path(_ENGINE_ENV) if _ENGINE_ENV else SERVICE_DIR.resolve()
 
 # ---- cost cap (the load-bearing safety rail) --------------------------------
 

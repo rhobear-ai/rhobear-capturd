@@ -88,9 +88,6 @@ class DemoCorrupt(DemoForgeError):
     pass
 
 
-class DemoAlreadyRunning(DemoForgeError):
-    """Raised when an enrichment is already in flight for this demo_id."""
-
 
 # ---------------------------------------------------------------------------
 # DemoForge — the coordinator
@@ -144,14 +141,8 @@ class DemoForge:
     def start_recording(self, payload: dict[str, Any]) -> tuple[Any, str, str]:
         return self.demo_manager.start(payload)
 
-    def get_recorder(self, session_id: str) -> Any:
-        return self.demo_manager.get(session_id)
-
     def discard_recorder(self, session_id: str) -> None:
         self.demo_manager.discard(session_id)
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        return self.demo_manager.list_sessions()
 
     # ------------------------------------------------------------------
     # Disk-backed reads
@@ -645,7 +636,6 @@ class DemoForge:
 
 __all__ = [
     "DEMOS_DIR_NAME",
-    "DemoAlreadyRunning",
     "DemoCorrupt",
     "DemoForge",
     "DemoForgeError",

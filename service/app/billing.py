@@ -49,7 +49,7 @@ def _verify_stripe(raw: bytes, sig_header: str, secret: str) -> bool:
         ts, v1 = parts["t"], parts["v1"]
     except Exception:
         return False
-    if abs(time.time() - int(ts)) > 60 * 10:
+    if abs(time.time() - int(ts)) > 60 * 5:
         return False
     mac = hmac.new(secret.encode(), f"{ts}.".encode() + raw,
                    hashlib.sha256).hexdigest()
@@ -58,7 +58,7 @@ def _verify_stripe(raw: bytes, sig_header: str, secret: str) -> bool:
 
 @router.post("/webhook")
 async def webhook(request: Request):
-    raw = await request.body()
+    raw = await request.body(max_size=1024 * 100)  # 100 KB max
     secret = config.BILLING_WEBHOOK_SECRET
     if not secret:
         raise HTTPException(status_code=503, detail="webhook secret not configured")

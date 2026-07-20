@@ -110,6 +110,9 @@ async def _capture_frames(
 # ---------------------------------------------------------------------------
 
 
+_FFMPEG_TIMEOUT = 600  # max seconds for any single ffmpeg call
+
+
 def _run_ffmpeg(args: list[str]) -> None:
     # -nostdin + DEVNULL: ffmpeg must never touch our stdin — when this runs
     # inside the MCP server, stdin is the JSON-RPC stdio channel and an
@@ -119,6 +122,7 @@ def _run_ffmpeg(args: list[str]) -> None:
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
+        timeout=_FFMPEG_TIMEOUT,
     )
     if result.returncode != 0:
         raise DemoExportError(f"ffmpeg failed:\n{result.stderr[-3000:]}")
