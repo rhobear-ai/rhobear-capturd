@@ -117,13 +117,21 @@ def _run_ffmpeg(args: list[str]) -> None:
     # -nostdin + DEVNULL: ffmpeg must never touch our stdin — when this runs
     # inside the MCP server, stdin is the JSON-RPC stdio channel and an
     # inherited handle makes ffmpeg block forever waiting for console input.
-    result = subprocess.run(
-        [args[0], "-nostdin", *args[1:]],
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-        timeout=_FFMPEG_TIMEOUT,
-    )
+    try:
+        result = subprocess.run(
+            [args[0], "-nostdin", *args[1:]],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=_FFMPEG_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A hung ffmpeg hitting the timeout raises TimeoutExpired, which none of
+        # the callers (export_video → coordinator.export_demo) catch — it would
+        # crash the export instead of surfacing a graceful error. Convert it.
+        raise DemoExportError(
+            f"ffmpeg timed out after {_FFMPEG_TIMEOUT}s"
+        ) from exc
     if result.returncode != 0:
         raise DemoExportError(f"ffmpeg failed:\n{result.stderr[-3000:]}")
 
