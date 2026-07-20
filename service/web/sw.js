@@ -1,6 +1,6 @@
 /* RHOBEAR Captur'd — service worker.
    Shell cache-first for offline app load; network-first (never cache) for API + auth + billing. */
-const VERSION = 'capturd-v3-glass';
+const VERSION = 'capturd-v4-premium';
 const SHELL = [
   '/',
   '/m',

@@ -1,0 +1,526 @@
+/* ═══════════════════════════════════════════════════════════════════
+   RHOBEAR Captur'd — Premium Layer 1 Overlay
+   Added 2026-07-20 · Build L1
+
+   Additive premium overlay for the EXISTING DOM structure.
+   Targets only existing class names. Preserves every feature.
+   Designed to complement the liquid-glass layer below it.
+
+   Accent: #4a9eff · Rho plasma: #00dfff / #7c5cff / #d83fff
+   Font: Nacelle (loaded via /assets/nacelle/nacelle.css)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Ambient background glow ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(74, 158, 255, 0.07) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 50% at 80% 80%, rgba(0, 223, 255, 0.04) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 20% 50%, rgba(74, 158, 255, 0.03) 0%, transparent 50%);
+}
+
+/* ── Topbar enhancement ── */
+.top {
+  background: rgba(8, 8, 16, 0.88) !important;
+  backdrop-filter: blur(20px) saturate(1.5) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(1.5) !important;
+  border-bottom-color: rgba(74, 158, 255, 0.12) !important;
+}
+.top .brand em {
+  text-shadow: 0 0 20px rgba(74, 158, 255, 0.3);
+}
+.top .brand img {
+  filter: drop-shadow(0 0 12px rgba(74, 158, 255, 0.6));
+}
+
+/* ── Enhanced console card (redesign studio-card treatment) ── */
+.console {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px !important;
+  transition: box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+/* Lit glass: rim + blue bloom + elevation */
+.console {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    0 0 40px -10px rgba(74, 158, 255, 0.35),
+    0 22px 50px -18px rgba(0, 0, 0, 0.75) !important;
+}
+/* Inner top glow (sheen) */
+.console::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(74, 158, 255, 0.4), transparent) !important;
+  z-index: 1;
+}
+/* Console heading refinement */
+.console h2 {
+  font-family: 'Nacelle Display', 'Nacelle', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.console h2 .sub {
+  font-family: 'Nacelle Text', 'Nacelle', system-ui, sans-serif;
+  font-weight: 500;
+}
+
+/* ── Template card enhancement (type-card treatment) ── */
+.tpl {
+  border-radius: 16px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.tpl:hover {
+  border-color: rgba(74, 158, 255, 0.5) !important;
+  background: rgba(74, 158, 255, 0.04) !important;
+  transform: translateY(-2px);
+}
+.tpl.sel {
+  border-color: #4a9eff !important;
+  background: rgba(74, 158, 255, 0.08) !important;
+  box-shadow:
+    0 0 0 1px #4a9eff,
+    0 0 24px -6px rgba(74, 158, 255, 0.4),
+    0 12px 30px -14px rgba(0, 0, 0, 0.5) !important;
+}
+.tpl.sel .icn {
+  filter: drop-shadow(0 0 10px rgba(74, 158, 255, 0.8));
+}
+.tpl b {
+  font-family: 'Nacelle Display', 'Nacelle', system-ui, sans-serif;
+  font-weight: 700;
+}
+
+/* ── Voice card enhancement ── */
+.voice {
+  border-radius: 14px !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.voice:hover {
+  border-color: rgba(74, 158, 255, 0.4) !important;
+  background: rgba(74, 158, 255, 0.04) !important;
+}
+.voice.sel {
+  border-color: #4a9eff !important;
+  background: rgba(74, 158, 255, 0.08) !important;
+  box-shadow: 0 0 0 1px #4a9eff, 0 0 16px -4px rgba(74, 158, 255, 0.35) !important;
+}
+
+/* ── Director brief / ask enhancement ── */
+.ask {
+  border-radius: 20px !important;
+}
+.ask textarea {
+  font-family: 'Nacelle Text', 'Nacelle', system-ui, sans-serif;
+}
+.ask:focus-within {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 8px 28px -10px rgba(74, 158, 255, 0.35),
+    0 0 40px -12px rgba(74, 158, 255, 0.2) !important;
+}
+
+/* ── Film-it CTA enhancement ── */
+.film .btn--primary {
+  position: relative;
+  border-radius: 14px !important;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.film .btn--primary:not(:disabled):hover {
+  box-shadow:
+    0 0 40px rgba(74, 158, 255, 0.5),
+    0 8px 32px -8px rgba(74, 158, 255, 0.4) !important;
+  transform: translateY(-1px);
+}
+.film .btn--primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.08) 100%);
+  pointer-events: none;
+}
+
+/* ── Plan card enhancement ── */
+.plan {
+  border-radius: 20px !important;
+  position: relative;
+}
+.plan::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(74, 158, 255, 0.3), transparent);
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   FILMING OVERLAY — constellation bear + 4-stage progress
+   ═══════════════════════════════════════════════════════════════════ */
+.capturd-filming {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(8, 8, 16, 0.97);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+.capturd-filming.on {
+  display: flex;
+}
+
+/* Constellation bear area */
+.capturd-filming__bear {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.capturd-filming__bear svg {
+  width: 100px;
+  height: 100px;
+  position: relative;
+  z-index: 2;
+}
+
+/* Pulse rings */
+.capturd-pulse-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid #4a9eff;
+  opacity: 0;
+  animation: capturd-pulse-out 2.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+.capturd-pulse-ring:nth-child(2) {
+  animation-delay: 0.8s;
+}
+.capturd-pulse-ring:nth-child(3) {
+  animation-delay: 1.6s;
+}
+
+@keyframes capturd-pulse-out {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* Filming status */
+.capturd-filming__status {
+  font-family: 'Nacelle Display', 'Nacelle', system-ui, sans-serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Completion message */
+.capturd-filming__done {
+  display: none;
+  font-family: 'Nacelle Display', 'Nacelle', system-ui, sans-serif;
+  font-size: 1.5rem;
+  font-weight: 900;
+  color: #00ff88;
+  animation: capturd-fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  align-items: center;
+  gap: 8px;
+}
+.capturd-filming__done.on {
+  display: flex;
+}
+.capturd-filming__done svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 4-stage pipeline */
+.capturd-filming__stages {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.capturd-stage {
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.capturd-stage--done {
+  color: #22C55E;
+}
+.capturd-stage--active {
+  color: #4a9eff;
+}
+.capturd-stage--pending {
+  color: rgba(255, 255, 255, 0.25);
+}
+.capturd-stage__icon {
+  width: 14px;
+  height: 14px;
+}
+.capturd-stage__divider {
+  width: 24px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Progress bar */
+.capturd-filming__progress {
+  width: min(400px, 75vw);
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.capturd-filming__fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4a9eff, #7c5cff);
+  border-radius: 2px;
+  transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 16px rgba(74, 158, 255, 0.5);
+}
+
+/* Timer */
+.capturd-filming__time {
+  font-family: 'Nacelle Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Stop button */
+.capturd-filming__stop {
+  padding: 10px 28px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #EF4444;
+  font-family: system-ui, sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.capturd-filming__stop:hover {
+  background: rgba(239, 68, 68, 0.1);
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ASK RHO FAB
+   ═══════════════════════════════════════════════════════════════════ */
+.capturd-fab {
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  z-index: 150;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2A8FA8, #1e7a8f);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow:
+    0 4px 24px rgba(42, 143, 168, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.capturd-fab:hover {
+  transform: scale(1.08);
+  box-shadow:
+    0 6px 32px rgba(42, 143, 168, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.capturd-fab:active {
+  transform: scale(0.95);
+}
+.capturd-fab svg {
+  width: 26px;
+  height: 26px;
+  color: #fff;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   GALLERY ENHANCEMENT — hover play button for video thumbnails
+   ═══════════════════════════════════════════════════════════════════ */
+.galitem {
+  position: relative;
+  border-radius: 16px !important;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.galitem:hover {
+  border-color: rgba(74, 158, 255, 0.3) !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 24px -8px rgba(74, 158, 255, 0.15);
+  transform: translateY(-2px);
+}
+.galitem video {
+  transition: filter 0.3s ease;
+}
+.galitem:hover video {
+  filter: brightness(0.7);
+}
+
+/* Play button overlay (added by bridge JS) */
+.capturd-play-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4a9eff, #2e7fdd);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 24px rgba(74, 158, 255, 0.4);
+  pointer-events: none;
+}
+.galitem:hover .capturd-play-btn {
+  opacity: 1;
+}
+.capturd-play-btn svg {
+  width: 20px;
+  height: 20px;
+  margin-left: 2px;
+}
+
+/* Gallery item actions row (injected by bridge JS) */
+.capturd-actions {
+  display: none;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+.capturd-actions.on {
+  display: flex;
+}
+.capturd-action {
+  flex: 1;
+  padding: 7px 0;
+  text-align: center;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: none;
+  font-family: system-ui, sans-serif;
+}
+.capturd-action--watch {
+  background: rgba(74, 158, 255, 0.12);
+  color: #4a9eff;
+  border: 1px solid rgba(74, 158, 255, 0.2);
+}
+.capturd-action--watch:hover {
+  background: #4a9eff;
+  color: #fff;
+}
+.capturd-action--ghost {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.capturd-action--ghost:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+}
+.capturd-action svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════ */
+@keyframes capturd-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes capturd-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.capturd-fade-in {
+  animation: capturd-fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.capturd-fade-in-up {
+  animation: capturd-fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RESPONSIVE — keep things clean on smaller screens
+   ═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  .capturd-fab {
+    width: 48px;
+    height: 48px;
+    bottom: 20px;
+    right: 16px;
+  }
+  .capturd-fab svg {
+    width: 22px;
+    height: 22px;
+  }
+  .capturd-filming__stages {
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 320px;
+  }
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .capturd-pulse-ring {
+    animation: none;
+    opacity: 0.15;
+  }
+  .capturd-filming__done {
+    animation: none;
+  }
+}
