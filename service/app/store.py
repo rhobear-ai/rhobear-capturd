@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS users (
   plan TEXT NOT NULL DEFAULT 'free',      -- free | pro
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -130,6 +136,15 @@ def get_job(job_id: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def list_jobs(uid: str, limit: int = 30) -> list[dict]:
+    """A user's recent jobs, newest first — powers the studio gallery."""
+    with _db() as c:
+        rows = c.execute(
+            "SELECT * FROM jobs WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
 def add_usage(uid: str, kind: str, n: int = 1) -> None:
     with _db() as c:
         c.execute("INSERT INTO usage(user_id,kind,n,at) VALUES(?,?,?,?)",
@@ -141,3 +156,36 @@ def usage_count(uid: str, kind: str) -> int:
         row = c.execute("SELECT COALESCE(SUM(n),0) AS t FROM usage WHERE user_id=? AND kind=?",
                         (uid, kind)).fetchone()
         return int(row["t"])
+
+
+# ---- MCP tokens -------------------------------------------------------------
+# The endpoint used to be keyed on the raw user id, which is guessable from any
+# response that leaks it. These are random, revocable, and one per user.
+
+def mcp_token_for(user_id: str) -> str:
+    """Return this user's MCP token, minting one on first use."""
+    with _db() as db:
+        row = db.execute("SELECT token FROM mcp_tokens WHERE user_id=?", (user_id,)).fetchone()
+        if row:
+            return row[0]
+        token = secrets.token_urlsafe(24)
+        db.execute("INSERT INTO mcp_tokens(token,user_id,created_at) VALUES(?,?,?)",
+                   (token, user_id, int(time.time())))
+        db.commit()
+        return token
+
+
+def user_for_mcp_token(token: str) -> dict | None:
+    if not token:
+        return None
+    with _db() as db:
+        row = db.execute(
+            "SELECT u.id,u.email,u.plan FROM mcp_tokens m JOIN users u ON u.id=m.user_id "
+            "WHERE m.token=?", (token,)).fetchone()
+    return {"id": row[0], "email": row[1], "plan": row[2]} if row else None
+
+
+def revoke_mcp_token(user_id: str) -> None:
+    with _db() as db:
+        db.execute("DELETE FROM mcp_tokens WHERE user_id=?", (user_id,))
+        db.commit()
