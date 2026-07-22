@@ -61,6 +61,33 @@ def test_pcm_to_wav_roundtrip():
         assert w.readframes(w.getnframes()) == pcm
 
 
+def test_pcm_to_wav_empty():
+    blob = tts_vertex._pcm_to_wav(b"", 24000)
+    with wave.open(io.BytesIO(blob)) as w:
+        assert w.getnframes() == 0
+
+
+def test_access_token_rejects_non_token_output(monkeypatch):
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 0
+            stdout = "ERROR: some gcloud message\nwith lines\n"
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(tts_vertex, "_token_cache", ("", 0.0))
+    monkeypatch.setattr(tts_vertex.shutil, "which", lambda n: "/usr/bin/gcloud")
+    monkeypatch.setattr(tts_vertex.subprocess, "run", fake_run)
+    with pytest.raises(tts_vertex.VertexTTSError, match="not an access token"):
+        tts_vertex._access_token()
+
+
+def test_parse_voice_unknown_warns(caplog):
+    with caplog.at_level("WARNING", logger="capturd.walk.tts_vertex"):
+        assert tts_vertex.parse_voice("NotAVoice")[0] == "Charon"
+    assert "falling back to Charon" in caplog.text
+
+
 def test_synthesize_empty_text_short_circuits():
     assert tts_vertex.synthesize("", "Kore") == (b"", [])
     assert tts_vertex.synthesize("   ", "Kore") == (b"", [])

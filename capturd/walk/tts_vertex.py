@@ -19,6 +19,7 @@ enough for camera keyframes and captions at narration pace.
 """
 from __future__ import annotations
 
+import base64
 import io
 import logging
 import os
@@ -78,7 +79,12 @@ def parse_voice(voice: str) -> tuple[str, str]:
     parts = (voice or "").split(":")
     if parts and parts[0].lower() == "vertex":
         parts = parts[1:]
-    name = parts[0] if parts and parts[0] in VERTEX_VOICES else "Charon"
+    if parts and parts[0] in VERTEX_VOICES:
+        name = parts[0]
+    else:
+        if parts and parts[0]:
+            log.warning("vertex tts: unknown voice %r — falling back to Charon", parts[0])
+        name = "Charon"
     style = parts[1] if len(parts) > 1 and parts[1] in STYLES else DEFAULT_STYLE
     return name, style
 
@@ -104,6 +110,10 @@ def _access_token() -> str:
     if out.returncode != 0:
         raise VertexTTSError(f"gcloud token failed: {out.stderr.strip()[:200]}")
     token = out.stdout.strip()
+    # Sanity: a real access token is one long unbroken string — never accept
+    # multi-line/spaced output (e.g. a misrouted gcloud error message).
+    if not token or any(c.isspace() for c in token):
+        raise VertexTTSError("gcloud returned something that is not an access token")
     _token_cache = (token, time.monotonic() + _TOKEN_TTL_S)
     return token
 
@@ -202,7 +212,6 @@ def synthesize(text: str, voice: str = "Charon") -> tuple[bytes, list]:
     if not inline:
         raise VertexTTSError("vertex tts returned no audio")
 
-    import base64
     pcm = base64.b64decode(inline["data"])
     m = re.search(r"rate=(\d+)", inline.get("mimeType", "") or "")
     rate = int(m.group(1)) if m else 24000

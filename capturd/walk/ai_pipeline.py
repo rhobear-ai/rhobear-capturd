@@ -377,9 +377,8 @@ async def _synthesize_one(
     # Vertex HD voice (the house engine, same one behind Rho) — selected by a
     # Vertex voice name ("Kore", "vertex:Charon:trailer") or forced via
     # CAPTURD_TTS_BACKEND=vertex. Edge TTS stays the zero-config fallback.
-    import os as _os
     from capturd.walk import tts_vertex
-    if tts_vertex.is_vertex_voice(voice) or _os.environ.get("CAPTURD_TTS_BACKEND", "").lower() == "vertex":
+    if tts_vertex.is_vertex_voice(voice) or os.environ.get("CAPTURD_TTS_BACKEND", "").lower() == "vertex":
         vertex_voice = voice if tts_vertex.is_vertex_voice(voice) else "Charon"
         try:
             return await asyncio.to_thread(tts_vertex.synthesize, text.strip(), vertex_voice)
