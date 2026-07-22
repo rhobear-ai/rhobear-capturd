@@ -6,7 +6,6 @@ end-to-end today except the owner's payment credentials (see billing.py / config
 """
 from __future__ import annotations
 
-import ipaddress
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -24,6 +23,7 @@ sys.path.insert(0, str(SERVICE_DIR))
 from app import auth, billing, config, store            # noqa: E402
 from app._http import read_json                          # noqa: E402
 from app.auth import current_user, require_user          # noqa: E402
+from capturd._net import is_private_ip                   # noqa: E402
 from render_worker import CostCap, JobSpec, run_job       # noqa: E402
 
 # the Director scout lives in the rig; add it to path. Same env var + default as
@@ -71,26 +71,11 @@ def shot_from_template(url: str, template: str, name: str, brief: str = "") -> d
 # (cloud metadata), 127.0.0.1 (the service itself), or an RFC 1918 host on the
 # box's private network — and read whatever the render returns. We resolve the
 # host and reject private/internal ranges at submit time.
-
-def _is_private_ip(ip_str: str) -> bool:
-    """True when *ip_str* is private/internal in any family.
-
-    Uses the stdlib ``ipaddress`` classification (review finding: the earlier
-    hand-rolled ranges missed IPv6-mapped IPv4 like ``::ffff:10.0.0.1``, which
-    would have bypassed the guard, and silently treated malformed IPv4 strings
-    as public). An IPv6-mapped IPv4 address is unwrapped and re-checked as its
-    IPv4 self. A string that doesn't parse as an IP at all is treated as
-    PRIVATE — fail closed, since getaddrinfo should only hand us real IPs.
-    """
-    try:
-        addr = ipaddress.ip_address(ip_str)
-    except ValueError:
-        return True   # unparseable ⇒ fail closed
-    mapped = getattr(addr, "ipv4_mapped", None)
-    if mapped is not None:
-        addr = mapped
-    return (addr.is_private or addr.is_loopback or addr.is_link_local
-            or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+#
+# The IP classification is the ONE shared copy in capturd._net (imported above),
+# used by both this service and the MCP server's demo.record, so the two
+# surfaces can't drift — the MCP copy used to be a hand-rolled one that failed
+# open on malformed input and missed IPv6-mapped IPv4 metadata addresses.
 
 
 def _reject_private_url(url: str) -> None:
@@ -104,7 +89,7 @@ def _reject_private_url(url: str) -> None:
         raise HTTPException(status_code=400, detail=f"hostname not found: {exc}") from exc
     for _family, _type, _proto, _canon, sockaddr in addrinfo:
         ip = sockaddr[0]
-        if _is_private_ip(ip):
+        if is_private_ip(ip):
             raise HTTPException(
                 status_code=403,
                 detail=f"url resolves to a private/internal IP ({ip}) — not allowed",
@@ -148,7 +133,7 @@ async def me(request: Request):
 
 
 def _run_generation(job_id: str, uid: str, url: str, template: str,
-                    name: str, spec_kwargs: dict) -> None:
+                    name: str, spec_kwargs: dict, held_free_slot: bool) -> None:
     store.record_job(job_id, uid, "walk", "running")
     # Director scout → a tight per-app shot; fall back to the generic tour.
     shot = None
@@ -163,8 +148,12 @@ def _run_generation(job_id: str, uid: str, url: str, template: str,
     spec = JobSpec(shot=shot, job_id=job_id, **spec_kwargs)
     res = run_job(spec, config.JOBS_DIR)
     store.record_job(job_id, uid, "walk", res.status, res.output, res.detail)
-    if res.status == "done":
-        store.add_usage(uid, "generation", 1)
+    # The Free lifetime slot was reserved at submit time (race-proof). Success
+    # keeps it — that was the free generation. A non-delivery (timeout/error/
+    # cap) refunds it so the user can retry instead of being locked out of
+    # their one free render by a failure they didn't cause.
+    if res.status != "done" and held_free_slot:
+        store.refund(uid, "generation", 1)
 
 
 @app.post("/api/generate")
@@ -176,18 +165,54 @@ async def generate(request: Request, background: BackgroundTasks):
         raise HTTPException(status_code=400, detail="a valid http(s) url is required")
     _reject_private_url(url)
     template = body.get("template") or "saas-walkthrough"
+    uid = user["id"]
+    is_pro = user["plan"] == "pro"
 
-    # plan / usage gate (canon: Free = 1 generation)
-    if user["plan"] != "pro":
-        used = store.usage_count(user["id"], "generation")
-        if used >= config.FREE_GENERATION_LIMIT:
+    # Gate 1 — sliding-window rate limit. Applies to Pro too, so a single Pro
+    # key (or a runaway script) can't drain the Vertex/chromium budget.
+    # Atomic check-and-reserve so concurrent requests can't all slip under it.
+    if not store.try_acquire(uid, "render_request",
+                             limit=config.RENDER_MAX_PER_HOUR, window_seconds=3600):
+        raise HTTPException(
+            status_code=429,
+            detail=f"rate limit: {config.RENDER_MAX_PER_HOUR} renders/hour per "
+                   "account. Try again shortly.",
+            headers={"Retry-After": str(
+                store.window_retry_after(uid, "render_request", 3600))},
+        )
+
+    # Gate 2 — Free lifetime limit (canon: Free = 1). Reserved BEFORE the render
+    # starts, atomically; refunded on failure. The old check (here) + increment
+    # (in the post-completion task) were two transactions up to 600s apart, so N
+    # concurrent Free calls all read 0 and passed — reserving here closes that.
+    held_free_slot = False
+    if not is_pro:
+        if not store.try_acquire(uid, "generation",
+                                 limit=config.FREE_GENERATION_LIMIT,
+                                 window_seconds=None):
+            store.refund(uid, "render_request")   # no render → don't count it
             raise HTTPException(
                 status_code=402,
                 detail=f"Free plan is {config.FREE_GENERATION_LIMIT} generation. "
                        f"Upgrade to Pro ({config.PRO_PRICE}/mo) for unlimited.")
+        held_free_slot = True
 
-    import uuid
-    job_id = uuid.uuid4().hex[:12]
+    # Gate 3 — per-account concurrency (Pro too). try_queue_job creates the
+    # queued job atomically iff under the in-flight cap, so this IS the
+    # reservation; if over, refund what the earlier gates reserved and 429.
+    job_id = store.try_queue_job(uid, "walk",
+                                 max_concurrent=config.RENDER_MAX_CONCURRENT)
+    if job_id is None:
+        store.refund(uid, "render_request")
+        if held_free_slot:
+            store.refund(uid, "generation")
+        raise HTTPException(
+            status_code=429,
+            detail=f"too many in-flight renders ({config.RENDER_MAX_CONCURRENT} "
+                   "max). Wait for one to finish.",
+            headers={"Retry-After": "60"},
+        )
+
     name = body.get("name") or f"{template} demo"
     # scout needs headroom on top of the film render
     cap = CostCap(max_seconds=int(body.get("max_seconds", 360)))
@@ -200,8 +225,8 @@ async def generate(request: Request, background: BackgroundTasks):
         "brief": (body.get("brief") or "")[:500],
         "cap": cap,
     }
-    store.record_job(job_id, user["id"], "walk", "queued")
-    background.add_task(_run_generation, job_id, user["id"], url, template, name, spec_kwargs)
+    background.add_task(_run_generation, job_id, uid, url, template, name,
+                        spec_kwargs, held_free_slot)
     return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
 
 

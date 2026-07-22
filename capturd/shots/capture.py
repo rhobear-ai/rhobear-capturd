@@ -27,6 +27,8 @@ from urllib.request import url2pathname
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 from xml.etree import ElementTree
 
+from capturd._net import is_private_ip
+
 
 DEFAULT_VIEWPORTS: dict[str, dict[str, int]] = {
     "desktop": {"width": 1440, "height": 1000},
@@ -334,41 +336,15 @@ def _parse_sitemap_xml(xml_bytes: bytes) -> tuple[list[str], list[str]]:
     return page_urls, sitemap_urls
 
 
-def _is_private_ip(ip_str: str) -> bool:
-    """Check if an IP address falls within private/internal ranges (RFC 1918, loopback, link-local, etc.)."""
-    if ":" in ip_str:
-        if ip_str.startswith("::1") or ip_str == "::":
-            return True
-        if ip_str.startswith("fc") or ip_str.startswith("fd"):
-            return True
-        if ip_str.startswith("fe80"):
-            return True
-        return False
-    try:
-        parts = ip_str.split(".")
-        addr = (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
-    except (ValueError, IndexError):
-        return False
-    ranges = (
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-        ("127.0.0.0", "127.255.255.255"),
-        ("169.254.0.0", "169.254.255.255"),
-        ("0.0.0.0", "0.255.255.255"),
-    )
-    for lo, hi in ranges:
-        lo_parts = lo.split(".")
-        hi_parts = hi.split(".")
-        lo_int = (int(lo_parts[0]) << 24) + (int(lo_parts[1]) << 16) + (int(lo_parts[2]) << 8) + int(lo_parts[3])
-        hi_int = (int(hi_parts[0]) << 24) + (int(hi_parts[1]) << 16) + (int(hi_parts[2]) << 8) + int(hi_parts[3])
-        if lo_int <= addr <= hi_int:
-            return True
-    return False
-
-
 def _reject_private_url(url: str) -> None:
-    """Raise RestedCaptureError if *url* resolves to a private/internal IP address."""
+    """Raise RestedCaptureError if *url* resolves to a private/internal IP address.
+
+    Uses the shared canonical guard in :mod:`capturd._net` (stdlib
+    ``ipaddress``-based: fails closed on unparseable input and unwraps
+    IPv6-mapped IPv4) so this fetch surface can't drift from the service and
+    MCP ones — the hand-rolled copy here used to miss IPv6-mapped IPv4 cloud
+    metadata addresses like ``::ffff:169.254.169.254``.
+    """
     host = urlparse(url).hostname
     if not host:
         raise RestedCaptureError("could not parse host from url")
@@ -378,7 +354,7 @@ def _reject_private_url(url: str) -> None:
         raise RestedCaptureError(f"hostname not found: {exc}") from exc
     for family, _type, _proto, _canon, sockaddr in addrinfo:
         ip = sockaddr[0]
-        if _is_private_ip(ip):
+        if is_private_ip(ip):
             raise RestedCaptureError(f"url resolves to a private/internal IP ({ip}) — not allowed")
 
 

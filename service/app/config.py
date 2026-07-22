@@ -46,6 +46,15 @@ FREE_GENERATION_LIMIT = int(_env("CAPTURD_FREE_GEN_LIMIT", "1"))
 FREE_SHOT_LIMIT = int(_env("CAPTURD_FREE_SHOT_LIMIT", "20"))
 PRO_PRICE = _env("CAPTURD_PRO_PRICE", "$19")
 
+# ---- render spend caps (paid Vertex TTS + Chromium is metered) ---------------
+# Every account — Pro included — is bounded on how many renders it can start,
+# so one account (or a runaway script holding a Pro key) cannot drain the
+# Vertex/chromium budget. Free is already lifetime-capped to
+# FREE_GENERATION_LIMIT; these add a per-account in-flight concurrency cap and
+# a sliding hourly window, enforced on POST /api/generate with 429 + Retry-After.
+RENDER_MAX_CONCURRENT = int(_env("CAPTURD_RENDER_MAX_CONCURRENT", "2"))
+RENDER_MAX_PER_HOUR = int(_env("CAPTURD_RENDER_MAX_PER_HOUR", "10"))
+
 # ---- OWNER-GATED credentials (honest flags) ----------------------------------
 # Billing — two paths. The CANON path (Lane K) creates a Stripe Checkout Session
 # server-side so the founder coupon auto-applies. The legacy path redirects to a

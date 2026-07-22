@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from capturd._net import is_private_ip
 from fastmcp import FastMCP
 
 from capturd.pro import is_pro, checkout_url, PRO_CONFIG
@@ -75,37 +76,10 @@ logger = logging.getLogger("capturd.mcp.server")
 
 
 # ── SSRF guard ─────────────────────────────────────────────────────────────
-# Shared by demo.record (HIGH #12) to prevent Playwright from navigating to
-# private/internal IPs.
-
-
-def _is_private_ip(ip_str: str) -> bool:
-    if ":" in ip_str:
-        if ip_str.startswith("::1") or ip_str == "::":
-            return True
-        if ip_str.startswith("fc") or ip_str.startswith("fd"):
-            return True
-        if ip_str.startswith("fe80"):
-            return True
-        return False
-    try:
-        parts = ip_str.split(".")
-        addr = (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
-    except (ValueError, IndexError):
-        return False
-    for lo, hi in (
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-        ("127.0.0.0", "127.255.255.255"),
-        ("169.254.0.0", "169.254.255.255"),
-        ("0.0.0.0", "0.255.255.255"),
-    ):
-        lo_int = (int(lo.split(".")[0]) << 24) + (int(lo.split(".")[1]) << 16) + (int(lo.split(".")[2]) << 8) + int(lo.split(".")[3])
-        hi_int = (int(hi.split(".")[0]) << 24) + (int(hi.split(".")[1]) << 16) + (int(hi.split(".")[2]) << 8) + int(hi.split(".")[3])
-        if lo_int <= addr <= hi_int:
-            return True
-    return False
+# Delegates to the single canonical stdlib-based predicate in capturd._net
+# (shared with service/app/main.py) so the two surfaces cannot drift. The
+# earlier hand-rolled copy here missed IPv6-mapped IPv4 like
+# ::ffff:169.254.169.254 (cloud metadata) and failed open on malformed input.
 
 
 def _reject_private_url(url: str) -> None:
@@ -118,8 +92,9 @@ def _reject_private_url(url: str) -> None:
         raise ValueError(f"hostname not found: {exc}") from exc
     for family, _type, _proto, _canon, sockaddr in addrinfo:
         ip = sockaddr[0]
-        if _is_private_ip(ip):
+        if is_private_ip(ip):
             raise ValueError(f"url resolves to a private/internal IP ({ip}) — not allowed")
+
 
 def _pro_required_payload(feature: str = "AI walkthrough tools") -> dict[str, Any]:
     """Structured paywall response returned by gated demo.* tools when Pro is inactive.
