@@ -29,13 +29,28 @@ import sys
 import time
 from pathlib import Path
 
+# Checkout URL is env-driven so no secret/URL is hardcoded in the repo.
+# Precedence: CAPTURD_PRO_CHECKOUT_URL > RHOBEAR_PRO_CHECKOUT_URL > "".
+# At launch this is a Stripe Payment Link (durable) or a server-created
+# Checkout Session URL (test mode). The CLI upgrade prompt + MCP demo.*
+# gate both surface this URL.
+def _resolve_checkout_url() -> str:
+    return ((os.environ.get("CAPTURD_PRO_CHECKOUT_URL") or "").strip()
+            or (os.environ.get("RHOBEAR_PRO_CHECKOUT_URL") or "").strip())
+
+
 PRO_CONFIG = {
     "product_name": "RHOBEAR Captur'd Pro",
     "price_label": "$19 / mo",
-    "checkout_url": "",   # <-- OWNER: your Stripe/PayPal buy link
     "codes": [],          # <-- OWNER: ["CAPTURD-LAUNCH-2026", ...]
     "pubkey_b64": "",     # <-- OWNER: Ed25519 public key (raw 32 bytes, base64) for signed licenses
 }
+
+
+def checkout_url() -> str:
+    """Stripe Checkout URL (env-driven). Empty string = not configured yet."""
+    return _resolve_checkout_url()
+
 
 _LICENSE_ENV = "RHOBEAR_CAPTURD_LICENSE"
 _LICENSE_FILE = Path.home() / ".capturd" / "license"
@@ -101,7 +116,7 @@ def require_pro(feature: str = "AI walkthroughs") -> bool:
     """True if unlocked; else print the upgrade prompt to stderr and return False."""
     if is_pro():
         return True
-    url = PRO_CONFIG.get("checkout_url") or "(checkout link coming soon)"
+    url = checkout_url() or "(checkout link coming soon)"
     sys.stderr.write(
         f"\n  {feature} are a {PRO_CONFIG['product_name']} feature ({PRO_CONFIG['price_label']}).\n"
         f"  Screenshots are free:            capturd shots ...\n"

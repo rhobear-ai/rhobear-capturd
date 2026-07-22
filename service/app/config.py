@@ -47,12 +47,24 @@ FREE_SHOT_LIMIT = int(_env("CAPTURD_FREE_SHOT_LIMIT", "20"))
 PRO_PRICE = _env("CAPTURD_PRO_PRICE", "$19")
 
 # ---- OWNER-GATED credentials (honest flags) ----------------------------------
-PRO_CHECKOUT_URL = _env("PRO_CHECKOUT_URL")           # buy button target
+# Billing — two paths. The CANON path (Lane K) creates a Stripe Checkout Session
+# server-side so the founder coupon auto-applies. The legacy path redirects to a
+# static PRO_CHECKOUT_URL (Payment Link). Session-creation wins when configured.
+STRIPE_SECRET_KEY = _env("STRIPE_SECRET_KEY")             # test: sk_test_...  (NEVER commit)
+CAPTURD_PRICE_ID = _env("CAPTURD_PRICE_ID")               # price for lookup_key rhobear_capturd_pro
+CAPTURD_COUPON_ID = _env("CAPTURD_COUPON_ID", "rhobear_capturd_founders_25")
+PRO_CHECKOUT_URL = _env("PRO_CHECKOUT_URL")               # buy button target (legacy static link)
 BILLING_WEBHOOK_SECRET = _env("BILLING_WEBHOOK_SECRET")
+
 GW_API_KEY = _env("RHOBEAR_GW_API_KEY")               # optional: agent self-drive
 
 # Central auth — identity comes from auth.rhobear.ai
 RHOBEAR_AUTH_BASE = _env("RHOBEAR_AUTH_BASE", "https://auth.rhobear.ai")
+
+# Billing is "configured" if EITHER checkout path is usable. The session-creation
+# path (canon) needs the secret key + price id; legacy needs a static URL.
+_BILLING_SESSION_READY = bool(STRIPE_SECRET_KEY and CAPTURD_PRICE_ID)
+_BILLING_LEGACY_READY = bool(PRO_CHECKOUT_URL)
 
 # Enterprise self-host: this whole service IS the enterprise edition when run on
 # the customer's own box. No separate build — same code, self-hosted.
@@ -62,7 +74,8 @@ EDITION = _env("CAPTURD_EDITION", "hosted")           # hosted | enterprise
 def status() -> dict:
     """Honest readiness — what's wired vs what waits on the owner's credentials."""
     return {
-        "billing_configured": bool(PRO_CHECKOUT_URL),
+        "billing_configured": bool(_BILLING_SESSION_READY or _BILLING_LEGACY_READY),
+        "billing_session_creation": _BILLING_SESSION_READY,
         "webhook_configured": bool(BILLING_WEBHOOK_SECRET),
         "gateway_configured": bool(GW_API_KEY),
         "edition": EDITION,
