@@ -6,6 +6,7 @@ end-to-end today except the owner's payment credentials (see billing.py / config
 """
 from __future__ import annotations
 
+import ipaddress
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -71,35 +72,25 @@ def shot_from_template(url: str, template: str, name: str, brief: str = "") -> d
 # box's private network — and read whatever the render returns. We resolve the
 # host and reject private/internal ranges at submit time.
 
-_PRIVATE_RANGES = (
-    ("10.0.0.0", "10.255.255.255"),          # RFC 1918 10/8
-    ("172.16.0.0", "172.31.255.255"),         # RFC 1918 172.16/12
-    ("192.168.0.0", "192.168.255.255"),       # RFC 1918 192.168/16
-    ("127.0.0.0", "127.255.255.255"),         # IPv4 loopback
-    ("169.254.0.0", "169.254.255.255"),       # link-local (incl. cloud metadata)
-    ("0.0.0.0", "0.255.255.255"),             # current-network
-)
-
-
-def _ip_to_int(ip_str: str) -> int:
-    parts = ip_str.split(".")
-    return (int(parts[0]) << 24) + (int(parts[1]) << 16) + (int(parts[2]) << 8) + int(parts[3])
-
-
 def _is_private_ip(ip_str: str) -> bool:
-    if ":" in ip_str:  # IPv6
-        if ip_str.startswith("::1") or ip_str == "::":
-            return True
-        if ip_str.startswith("fc") or ip_str.startswith("fd"):   # unique-local
-            return True
-        if ip_str.startswith("fe80"):                            # link-local
-            return True
-        return False
+    """True when *ip_str* is private/internal in any family.
+
+    Uses the stdlib ``ipaddress`` classification (review finding: the earlier
+    hand-rolled ranges missed IPv6-mapped IPv4 like ``::ffff:10.0.0.1``, which
+    would have bypassed the guard, and silently treated malformed IPv4 strings
+    as public). An IPv6-mapped IPv4 address is unwrapped and re-checked as its
+    IPv4 self. A string that doesn't parse as an IP at all is treated as
+    PRIVATE — fail closed, since getaddrinfo should only hand us real IPs.
+    """
     try:
-        addr = _ip_to_int(ip_str)
-    except (ValueError, IndexError):
-        return False
-    return any(_ip_to_int(lo) <= addr <= _ip_to_int(hi) for lo, hi in _PRIVATE_RANGES)
+        addr = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True   # unparseable ⇒ fail closed
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        addr = mapped
+    return (addr.is_private or addr.is_loopback or addr.is_link_local
+            or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
 
 
 def _reject_private_url(url: str) -> None:
